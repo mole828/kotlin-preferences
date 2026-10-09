@@ -1,0 +1,10 @@
+product: js/app
+
+dependencies:
+  - ../modeling
+  - bom: org.jetbrains.kotlin-wrappers:kotlin-wrappers-bom:2026.9.3
+  - org.jetbrains.kotlin-wrappers:kotlin-react
+  - org.jetbrains.kotlin-wrappers:kotlin-react-dom
+  - org.jetbrains.kotlin-wrappers:kotlin-browser
+  - io.ktor:ktor-client-js:3.6.0
+  - org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0

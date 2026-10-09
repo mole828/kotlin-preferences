@@ -1,0 +1,42 @@
+# Kotlin Toolchain 构建产物与本地缓存（所有模块）
+build/
+.kotlin/
+.kotlin-toolchain/
+.konan/
+
+# 本地聊天数据库
+chat.db
+chat.db-shm
+chat.db-wal
+chat.db-journal
+
+# Web 依赖、链接产物和打包结果
+node_modules/
+/web/dist/
+/web/.kotlin-js/
+.vite/
+
+# IDE 本地状态
+.idea/
+*.iml
+
+# 本地环境配置；示例配置可提交
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+
+# 日志和 JVM 内存转储
+*.log
+*.hprof
+
+# 操作系统与编辑器临时文件
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
