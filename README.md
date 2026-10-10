@@ -2,20 +2,32 @@
 
 用于记录和实践项目技术倾向的 Kotlin 多模块项目。使用 Kotlin Toolchain 0.13.0（原 Amper），构建版本及校验和固定在根目录的 `kotlin` / `kotlin.bat` 中。
 
+聊天功能作为示例，用来展示业务逻辑、界面、传输和存储各自放在哪里。项目重点是将业务模型、规则与用例集中在 `modeling`，让前后端开发者都能直接理解、审查和测试同一份业务逻辑。
+
 ## 模块与技术倾向
 
 | 模块 | 技术 | 职责 |
 | --- | --- | --- |
 | `web` | Kotlin/JS、kotlin-react、Vite | 聊天界面：加入/离开房间、发送消息、历史记录与轮询更新 |
-| `backend` | Ktor CIO、Kotlin Multiplatform | JVM、Linux Native、macOS Native 共享的 Ktor 聊天服务与 sqlx4k 持久化 |
+| `backend` | Ktor CIO、Kotlin Multiplatform | JVM、Linux Native、macOS Native 共享的 HTTP 路由、业务服务装配与 sqlx4k 持久化 |
 | `jvm` | Kotlin/JVM | JVM 服务启动入口 |
 | `linux` | Kotlin/Native，Linux x64 + ARM64 | Linux 原生服务启动入口 |
 | `macos` | Kotlin/Native，macOS ARM64 | 本地开发用的 macOS 原生服务启动入口 |
-| `modeling` | Kotlin Multiplatform，JVM + JS + Linux/macOS Native | 前后端共享的领域模型、ChatClient 接口与 Ktor Client 实现 |
+| `modeling` | Kotlin Multiplatform，JVM + JS + Linux/macOS Native | 领域模型、业务规则与用例、仓库接口，以及共享调用契约和 HTTP 客户端 |
 
-依赖方向为 `web → modeling ← backend ← jvm/linux/macos`。共享模块集中声明聊天调用契约；前后端不直接依赖彼此。`backend` 是 `kmp/lib`，共享源码位于 `backend/src/`；三个应用模块位于 `backend/runtime/`，仅调用共享的 `runBackend()`；公共服务代码和各平台启动入口统一收在 `backend/` 目录下。
+依赖方向为 `web → modeling ← backend ← jvm/linux/macos`。前后端共同依赖 `modeling` 中的业务定义，彼此不直接依赖。`backend` 是 `kmp/lib`，共享源码位于 `backend/src/`；三个应用模块位于 `backend/runtime/`，仅调用共享的 `runBackend()`；后端适配代码和各平台启动入口统一收在 `backend/` 目录下。
 
-聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口并委派给 `ChatRoomRepository`，后端路由只调用这个接口；`modeling.client.KtorChatClient` 也实现同一接口，集中管理 URL、JSON、查询参数和 API 错误。Web 不实现 HTTP 请求协议，只注入 `HttpClient(Js)` 和浏览器同源地址，调用共享客户端并管理界面状态。HttpClient 的创建与关闭由使用它的平台负责。 后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
+### 业务逻辑集中在 modeling
+
+`modeling.ChatService` 展示业务用例的组织方式：校验用户和房间标识、校验消息内容、生成消息时间，并通过 `ChatRoomRepository` 接口完成成员关系与消息的存取。存储实现位于 `backend`；发送时的成员检查随写入在同一条 SQL 中完成，以保证原子性。
+
+前端开发者可以直接阅读这些规则和流程，检查界面行为是否符合业务要求，并参与业务变更的审查。业务代码依赖仓库接口，可以注入内存实现独立测试，也为原型演示提供复用空间。
+
+共享源码与实际执行位置分别由模块组织和运行时装配决定。当前 Web 通过 HTTP 调用后端，由后端执行 `ChatService` 中的业务逻辑与校验；前端能够检查或复用规则，服务端仍负责保证请求有效。
+
+### 调用契约与平台适配
+
+聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口，后端路由只调用这个接口；`modeling.client.KtorChatClient` 也实现同一接口，集中管理 URL、JSON、查询参数和 API 错误。Web 注入 `HttpClient(Js)` 和浏览器同源地址，调用共享客户端并管理界面状态。HttpClient 的创建与关闭由使用它的平台负责。后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
 
 Kotlin 源码统一由 Kotlin Toolchain 管理，通过 `project.yaml` 聚合各模块，各模块使用 `module.yaml` 声明产品类型和依赖。前端 React Kotlin 包装器通过 Maven BOM 统一版本；React 的 JS 运行时与 Vite 在 `web/package.json` 中声明。
 
@@ -29,7 +41,7 @@ macOS / Linux 使用 `./kotlin`，Windows 使用 `kotlin.bat`。包装脚本首�
 ./kotlin run -m jvm
 ```
 
-后端使用 Ktor 3.6.0 和 CIO 引擎，默认监听 `127.0.0.1:8080`。`GET /` 返回项目技术信息，`GET /health` 返回 `OK`。聊天记录与房间成员通过 sqlx4k 1.12.0 存入 SQLite；默认数据库文件为启动工作目录下的 `chat.db`，重启后保留消息。共享入口 `runBackend(host, port)` 可指定监听地址和端口。不同平台若要读取同一份数据，应使用同一个数据库文件路径。服务逻辑、SQL 和接口都在公共源码中；`src@jvm/` 与 `src@native/` 仅负责构造对应平台的 SQLite 驱动。
+后端使用 Ktor 3.6.0 和 CIO 引擎，默认监听 `127.0.0.1:8080`。`GET /` 返回项目技术信息，`GET /health` 返回 `OK`。聊天记录与房间成员通过 sqlx4k 1.12.0 存入 SQLite；默认数据库文件为启动工作目录下的 `chat.db`，重启后保留消息。共享入口 `runBackend(host, port)` 可指定监听地址和端口。不同平台若要读取同一份数据，应使用同一个数据库文件路径。业务逻辑与仓库接口位于 `modeling/src/`，HTTP 路由与 SQL 实现位于 `backend/src/`；`backend/src@jvm/` 与 `backend/src@native/` 仅负责构造对应平台的 SQLite 驱动。
 
 本地开发同时启动后端与 Web：
 
