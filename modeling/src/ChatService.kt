@@ -7,16 +7,17 @@ import kotlin.time.Instant
 import kotlin.time.Clock
 
 class ChatService(
-    private val chatRoomRepository: ChatRoomRepository
+    private val chatRoomRepository: ChatRoomRepository,
+    private val membershipService: MembershipService,
 ) : ChatClient {
     override suspend fun join(userId: UserId, roomId: RoomId) {
-        validateIds(userId, roomId)
-        chatRoomRepository.addUserToRoom(userId, roomId)
+        if (membershipService.join(userId, roomId)) {
+            send(SendMessageRequest(userId, roomId, "${userId.value} 加入了群聊"))
+        }
     }
 
     override suspend fun leave(userId: UserId, roomId: RoomId) {
-        validateIds(userId, roomId)
-        chatRoomRepository.deleteUserFromRoom(userId, roomId)
+        membershipService.leave(userId, roomId)
     }
 
     override suspend fun send(request: SendMessageRequest): ChatMessage = send(
@@ -35,9 +36,9 @@ class ChatService(
         validateIds(userId, roomId)
         return chatRoomRepository.pullMessage(userId, roomId, after)
     }
+}
 
-    private fun validateIds(userId: UserId, roomId: RoomId) {
-        require(userId.value.isNotBlank() && userId.value.length <= 80) { "用户标识须为 1–80 字符" }
-        require(roomId.value.isNotBlank() && roomId.value.length <= 80) { "房间标识须为 1–80 字符" }
-    }
+internal fun validateIds(userId: UserId, roomId: RoomId) {
+    require(userId.value.isNotBlank() && userId.value.length <= 80) { "用户标识须为 1–80 字符" }
+    require(roomId.value.isNotBlank() && roomId.value.length <= 80) { "房间标识须为 1–80 字符" }
 }

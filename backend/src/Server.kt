@@ -1,5 +1,6 @@
 package preferences.backend
 
+import io.github.smyrgeorge.sqlx4k.ConnectionPool
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
@@ -23,6 +24,7 @@ import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatApiError
 import preferences.modeling.ChatClient
 import preferences.modeling.ChatService
+import preferences.modeling.MembershipService
 import preferences.modeling.NotInRoomException
 import preferences.modeling.RoomMembershipRequest
 import preferences.modeling.SendMessageRequest
@@ -84,12 +86,17 @@ fun runBackend(
     port: Int = 8080,
     databaseUrl: String = DEFAULT_CHAT_DATABASE_URL,
 ): Unit = runBlocking {
-    val repository = SqlxChatRoomRepository.open(databaseUrl)
+    val database = openSqliteDatabase(databaseUrl, ConnectionPool.Options())
     try {
+        val memberships = SqlxMembershipRepository(database)
+        val messages = SqlxChatRoomRepository(database)
+        memberships.initialize()
+        messages.initialize()
+        val chat = ChatService(messages, MembershipService(memberships))
         embeddedServer(CIO, host = host, port = port) {
-            backendModule(ChatService(repository))
+            backendModule(chat)
         }.start(wait = true)
     } finally {
-        repository.close()
+        database.close().getOrThrow()
     }
 }

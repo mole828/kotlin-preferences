@@ -1,6 +1,5 @@
 package preferences.backend
 
-import io.github.smyrgeorge.sqlx4k.ConnectionPool
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.sync.Mutex
@@ -15,13 +14,9 @@ import kotlin.time.Instant
 const val DEFAULT_CHAT_DATABASE_URL = "sqlite://chat.db"
 
 /** SQLite-backed repository shared by the JVM and Kotlin/Native server targets. */
-class SqlxChatRoomRepository private constructor(
+class SqlxChatRoomRepository(
     private val database: Driver,
 ) : ChatRoomRepository {
-    constructor(url: String = DEFAULT_CHAT_DATABASE_URL) : this(
-        openSqliteDatabase(url, ConnectionPool.Options()),
-    )
-
     private val initializationMutex = Mutex()
     private var initialized = false
 
@@ -29,15 +24,6 @@ class SqlxChatRoomRepository private constructor(
         initializationMutex.withLock {
             if (initialized) return
 
-            database.execute(
-                """
-                CREATE TABLE IF NOT EXISTS room_memberships (
-                    room_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    PRIMARY KEY (room_id, user_id)
-                )
-                """.trimIndent(),
-            ).getOrThrow()
             database.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -56,33 +42,6 @@ class SqlxChatRoomRepository private constructor(
             ).getOrThrow()
             initialized = true
         }
-    }
-
-    suspend fun close() {
-        database.close().getOrThrow()
-    }
-
-    override suspend fun addUserToRoom(userId: UserId, roomId: RoomId) {
-        initialize()
-        database.execute(
-            Statement.create(
-                "INSERT INTO room_memberships(room_id, user_id) VALUES (:roomId, :userId) " +
-                    "ON CONFLICT(room_id, user_id) DO NOTHING",
-            )
-                .bind("roomId", roomId.value)
-                .bind("userId", userId.value),
-        ).getOrThrow()
-    }
-
-    override suspend fun deleteUserFromRoom(userId: UserId, roomId: RoomId) {
-        initialize()
-        database.execute(
-            Statement.create(
-                "DELETE FROM room_memberships WHERE room_id = :roomId AND user_id = :userId",
-            )
-                .bind("roomId", roomId.value)
-                .bind("userId", userId.value),
-        ).getOrThrow()
     }
 
     override suspend fun addMessage(chatMessage: ChatMessage): ChatMessage {
@@ -162,26 +121,6 @@ class SqlxChatRoomRepository private constructor(
                 roomId = RoomId(row.get("room_id").asString()),
                 id = row.get("id").asString().toLong(),
             )
-        }
-    }
-
-    companion object {
-        suspend fun open(
-            url: String = DEFAULT_CHAT_DATABASE_URL,
-            options: ConnectionPool.Options = ConnectionPool.Options(),
-        ): SqlxChatRoomRepository {
-            val repository = SqlxChatRoomRepository(openSqliteDatabase(url, options))
-            try {
-                repository.initialize()
-                return repository
-            } catch (failure: Throwable) {
-                try {
-                    repository.close()
-                } catch (closeFailure: Throwable) {
-                    failure.addSuppressed(closeFailure)
-                }
-                throw failure
-            }
         }
     }
 }

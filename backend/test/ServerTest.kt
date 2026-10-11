@@ -19,6 +19,8 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import preferences.modeling.MembershipRepository
+import preferences.modeling.MembershipService
 import preferences.modeling.ChatRoomRepository
 import preferences.modeling.NotInRoomException
 import preferences.modeling.ChatService
@@ -32,8 +34,52 @@ import preferences.modeling.types.UserId
 
 class ServerTest {
     @Test
+    fun joiningWritesMembershipAndOneMessageUntilLeaving() = testApplication {
+        val database = openSqliteDatabase("sqlite::memory:", ConnectionPool.Options(maxConnections = 1))
+        try {
+            val memberships = SqlxMembershipRepository(database)
+            val messages = SqlxChatRoomRepository(database)
+            val chat = ChatService(messages, MembershipService(memberships))
+            val user = UserId("alice")
+            val room = RoomId("lobby")
+
+            chat.join(user, room)
+            chat.join(user, room)
+            val joined = chat.pull(user, room)
+            assertEquals(listOf("alice 加入了群聊"), joined.map(ChatMessage::content))
+            assertEquals(user, joined.single().sender)
+            assertEquals(room, joined.single().roomId)
+
+            chat.leave(user, room)
+            assertFailsAs<NotInRoomException> { chat.pull(user, room) }
+            chat.join(user, room)
+            assertEquals(2, chat.pull(user, room).size)
+        } finally {
+            database.close().getOrThrow()
+        }
+    }
+
+    // Baseline for transaction exploration: the two writes are not yet atomic.
+    @Test
+    fun failedJoinMessageCurrentlyLeavesMembershipBehind() = testApplication {
+        val database = openSqliteDatabase("sqlite::memory:", ConnectionPool.Options(maxConnections = 1))
+        try {
+            val memberships = SqlxMembershipRepository(database)
+            val chat = ChatService(ExplodingRepository(), MembershipService(memberships))
+            val user = UserId("alice")
+            val room = RoomId("lobby")
+
+            assertFailsAs<IllegalStateException> { chat.join(user, room) }
+            assertFalse(memberships.addUserToRoom(user, room))
+            assertTrue(SqlxChatRoomRepository(database).pullMessage(user, room, null).isEmpty())
+        } finally {
+            database.close().getOrThrow()
+        }
+    }
+
+    @Test
     fun servesProjectProfile() = testApplication {
-        application { backendModule(ChatService(ExplodingRepository())) }
+        application { backendModule(ChatService(ExplodingRepository(), MembershipService(ExplodingRepository()))) }
         val response = client.get("/")
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("${projectProfile.name}: ${projectProfile.backend}", response.bodyAsText())
@@ -41,7 +87,7 @@ class ServerTest {
 
     @Test
     fun healthCheck() = testApplication {
-        application { backendModule(ChatService(ExplodingRepository())) }
+        application { backendModule(ChatService(ExplodingRepository(), MembershipService(ExplodingRepository()))) }
         val response = client.get("/health")
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("OK", response.bodyAsText())
@@ -49,11 +95,14 @@ class ServerTest {
 
     @Test
     fun sqliteRepositoryEnforcesMembershipAndInclusiveStableRoomScopedPulls() = testApplication {
-        val repository = SqlxChatRoomRepository.open(
+        val database = openSqliteDatabase(
             url = "sqlite::memory:",
             options = ConnectionPool.Options(maxConnections = 1),
         )
         try {
+            val repository = SqlxChatRoomRepository(database)
+            val memberships = SqlxMembershipRepository(database)
+            memberships.initialize()
             val user = UserId("alice")
             val room = RoomId("room-a")
             val otherRoom = RoomId("room-b")
@@ -66,9 +115,9 @@ class ServerTest {
                 repository.addMessage(message(user, room, "blocked", boundary))
             }
 
-            repository.addUserToRoom(user, room)
-            repository.addUserToRoom(user, room)
-            repository.addUserToRoom(user, otherRoom)
+            memberships.addUserToRoom(user, room)
+            memberships.addUserToRoom(user, room)
+            memberships.addUserToRoom(user, otherRoom)
             val first = repository.addMessage(message(user, room, "first", boundary))
             val second = repository.addMessage(message(user, room, "second", boundary))
             repository.addMessage(
@@ -82,18 +131,18 @@ class ServerTest {
             assertTrue(pulled.all { it.roomId == room })
             assertEquals(boundary, pulled.first().time)
 
-            repository.deleteUserFromRoom(user, room)
-            repository.deleteUserFromRoom(user, room)
+            memberships.deleteUserFromRoom(user, room)
+            memberships.deleteUserFromRoom(user, room)
             assertFailsAs<NotInRoomException> {
                 repository.addMessage(message(user, room, "after leave", boundary))
             }
             assertFailsAs<NotInRoomException> {
                 repository.pullMessage(user, room, null)
             }
-            repository.addUserToRoom(user, room)
+            memberships.addUserToRoom(user, room)
             assertEquals(3, repository.pullMessage(user, room, null).size)
         } finally {
-            repository.close()
+            database.close().getOrThrow()
         }
     }
 
@@ -105,26 +154,30 @@ class ServerTest {
         val room = RoomId("persistent-room")
         val persisted = message(user, room, "kept after close", Instant.parse("2026-10-09T01:02:03.000000001Z"))
 
-        val firstRepository = SqlxChatRoomRepository.open(url)
+        val firstDatabase = openSqliteDatabase(url, ConnectionPool.Options())
+        val firstRepository = SqlxChatRoomRepository(firstDatabase)
+        val memberships = SqlxMembershipRepository(firstDatabase)
         val inserted = try {
-            firstRepository.addUserToRoom(user, room)
+            memberships.addUserToRoom(user, room)
             firstRepository.addMessage(persisted)
         } finally {
-            firstRepository.close()
+            firstDatabase.close().getOrThrow()
         }
 
-        val reopenedRepository = SqlxChatRoomRepository.open(url)
+        val reopenedDatabase = openSqliteDatabase(url, ConnectionPool.Options())
+        val reopenedRepository = SqlxChatRoomRepository(reopenedDatabase)
         try {
             val restored = reopenedRepository.pullMessage(user, room, persisted.time)
             assertEquals(listOf(inserted), restored)
         } finally {
-            reopenedRepository.close()
+            reopenedDatabase.close().getOrThrow()
         }
     }
 
     @Test
     fun sharedClientMatchesBackendApiAndMapsErrors() = testApplication {
-        application { backendModule(ChatService(InMemoryRepository())) }
+        val repository = InMemoryRepository()
+        application { backendModule(ChatService(repository, MembershipService(repository))) }
         val chatClient = KtorChatClient(client, "http://localhost")
 
         val joinStatus = client.post("/api/chat/join") {
@@ -191,7 +244,7 @@ class ServerTest {
 
     @Test
     fun unexpectedRepositoryErrorsReturnGenericServerError() = testApplication {
-        application { backendModule(ChatService(ExplodingRepository())) }
+        application { backendModule(ChatService(ExplodingRepository(), MembershipService(ExplodingRepository()))) }
         val response = client.post("/api/chat/join") {
             contentType(ContentType.Application.Json)
             setBody("""{"userId":"alice","roomId":"room-a"}""")
@@ -209,8 +262,8 @@ class ServerTest {
         assertIs<T>(failure)
     }
 
-    private class ExplodingRepository : ChatRoomRepository {
-        override suspend fun addUserToRoom(userId: UserId, roomId: RoomId) {
+    private class ExplodingRepository : ChatRoomRepository, MembershipRepository {
+        override suspend fun addUserToRoom(userId: UserId, roomId: RoomId): Boolean {
             error("database secret")
         }
 
@@ -224,13 +277,13 @@ class ServerTest {
             error("database secret")
     }
 
-    private class InMemoryRepository : ChatRoomRepository {
+    private class InMemoryRepository : ChatRoomRepository, MembershipRepository {
         private val members = mutableSetOf<Pair<UserId, RoomId>>()
         private val messages = mutableListOf<ChatMessage>()
         private var nextId = 1L
 
-        override suspend fun addUserToRoom(userId: UserId, roomId: RoomId) {
-            members += userId to roomId
+        override suspend fun addUserToRoom(userId: UserId, roomId: RoomId): Boolean {
+            return members.add(userId to roomId)
         }
 
         override suspend fun deleteUserFromRoom(userId: UserId, roomId: RoomId) {
