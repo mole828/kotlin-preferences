@@ -6,18 +6,19 @@ import preferences.modeling.types.UserId
 import kotlin.time.Instant
 import kotlin.time.Clock
 
-class ChatService(
-    private val chatRoomRepository: ChatRoomRepository,
-    private val membershipService: MembershipService,
-) : ChatClient {
+class ChatService(private val db: Database) : ChatClient {
     override suspend fun join(userId: UserId, roomId: RoomId) {
-        if (membershipService.join(userId, roomId)) {
-            send(SendMessageRequest(userId, roomId, "${userId.value} 加入了群聊"))
+        db.transaction {
+            if (memberships.join(userId, roomId)) {
+                messages.addMessage(
+                    ChatMessage(userId, "${userId.value} 加入了群聊", Clock.System.now(), roomId)
+                )
+            }
         }
     }
 
     override suspend fun leave(userId: UserId, roomId: RoomId) {
-        membershipService.leave(userId, roomId)
+        db.transaction { memberships.leave(userId, roomId) }
     }
 
     override suspend fun send(request: SendMessageRequest): ChatMessage = send(
@@ -28,13 +29,13 @@ class ChatService(
         validateIds(message.sender, message.roomId)
         require(message.content.isNotBlank()) { "消息不能为空" }
         require(message.content.length <= 4000) { "消息最多 4000 字符" }
-        return chatRoomRepository.addMessage(message)
+        return db.transaction { messages.addMessage(message) }
     }
 
     // Inclusive boundary: clients merge by message id, so equal timestamps are not lost.
     override suspend fun pull(userId: UserId, roomId: RoomId, after: Instant?): List<ChatMessage> {
         validateIds(userId, roomId)
-        return chatRoomRepository.pullMessage(userId, roomId, after)
+        return db.transaction { messages.pullMessage(userId, roomId, after) }
     }
 }
 

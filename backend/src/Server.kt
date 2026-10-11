@@ -24,7 +24,6 @@ import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatApiError
 import preferences.modeling.ChatClient
 import preferences.modeling.ChatService
-import preferences.modeling.MembershipService
 import preferences.modeling.NotInRoomException
 import preferences.modeling.RoomMembershipRequest
 import preferences.modeling.SendMessageRequest
@@ -88,11 +87,9 @@ fun runBackend(
 ): Unit = runBlocking {
     val database = openSqliteDatabase(databaseUrl, ConnectionPool.Options())
     try {
-        val memberships = SqlxMembershipRepository(database)
-        val messages = SqlxChatRoomRepository(database)
-        memberships.initialize()
-        messages.initialize()
-        val chat = ChatService(messages, MembershipService(memberships))
+        val db = SqlxDatabase(database)
+        db.initialize()
+        val chat = ChatService(db)
         embeddedServer(CIO, host = host, port = port) {
             backendModule(chat)
         }.start(wait = true)

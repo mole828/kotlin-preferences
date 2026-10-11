@@ -19,7 +19,25 @@
 
 ### 业务逻辑集中在 modeling
 
-`modeling.ChatService` 展示业务用例的组织方式：加入、离开房间委托给 `MembershipService`，消息内容校验、时间生成与消息存取仍由 `ChatService` 负责。`MembershipService` 通过 `MembershipRepository` 管理成员，`ChatService` 通过 `ChatRoomRepository` 管理消息。首次加入房间后，`ChatService` 写入一条“用户 加入了群聊”的普通消息；重复加入不重复发消息。后端的 `SqlxMembershipRepository` 和 `SqlxChatRoomRepository` 分别管理成员表和消息表，共用一个数据库驱动。这个流程产生了跨 repository 的事务需求：目前两次写入尚未放进同一事务，消息写入失败时成员关系会保留，重试加入也不会补发消息，作为后续探索事务的最小案例。存储实现位于 `backend`；发送时的成员检查随写入在同一条 SQL 中完成，以保证原子性。
+`modeling.ChatService` 通过 `Database.transaction` 执行业务，事务块的接收者是 `TransactionScope`，可以直接访问 `memberships`（`MembershipService`）和 `messages`（`ChatRoomRepository`）：
+
+```kotlin
+db.transaction {
+    if (memberships.join(userId, roomId)) {
+        messages.addMessage(
+            ChatMessage(userId, "${userId.value} 加入了群聊", Clock.System.now(), roomId)
+        )
+    }
+}
+```
+
+后端 `SqlxDatabase` 开启一次数据库事务，将成员 service 使用的 `SqlxMembershipRepository` 和消息仓库 `SqlxChatRoomRepository` 绑定到同一个事务执行器。正常返回时提交，异常退出或提交前协程已取消时回滚；取消后的回滚在 `NonCancellable` 中执行。入群消息写入失败时，成员关系也会回滚，重试可以完整执行。重复加入不重复发消息。
+
+两个 SQL repository 分别管理成员表和消息表，建表在启动时完成，业务方法只执行查询和写入。发送时的成员检查仍与写入放在同一条 SQL 中。HTTP 调用契约 `ChatClient` 保持不变，业务层不依赖 sqlx4k。
+
+这里使用 Kotlin 的接收者 lambda（`suspend TransactionScope.() -> T`），不需要额外开启 `context` 语言特性。事务块内通过 scope 中的 service 和 repository 组合操作；本版每次 `db.transaction` 都开启新事务，不支持嵌套事务传播。不要在事务块内再次调用开启事务的 `ChatService` 方法。异常需要退出事务块才会触发回滚，捕获异常后正常返回仍会提交。
+
+JVM 测试覆盖入群提交与去重、消息写入失败后成员回滚及重试、协程取消后两份仓库的回滚与连接复用，均使用真实 SQLite。
 
 前端开发者可以直接阅读这些规则和流程，检查界面行为是否符合业务要求，并参与业务变更的审查。业务代码依赖仓库接口，可以注入内存实现独立测试，也为原型演示提供复用空间。
 
