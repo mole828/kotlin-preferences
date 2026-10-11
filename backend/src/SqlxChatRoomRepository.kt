@@ -1,6 +1,7 @@
 package preferences.backend
 
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
+import io.github.smyrgeorge.sqlx4k.impl.coroutines.TransactionContext
 import io.github.smyrgeorge.sqlx4k.Statement
 import preferences.modeling.ChatRoomRepository
 import preferences.modeling.NotInRoomException
@@ -12,10 +13,8 @@ import kotlin.time.Instant
 const val DEFAULT_CHAT_DATABASE_URL = "sqlite://chat.db"
 
 /** SQLite-backed repository shared by the JVM and Kotlin/Native server targets. */
-class SqlxChatRoomRepository(
-    private val database: QueryExecutor,
-) : ChatRoomRepository {
-    suspend fun initialize() {
+class SqlxChatRoomRepository : ChatRoomRepository {
+    suspend fun initialize(database: QueryExecutor) {
         database.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_messages (
@@ -35,7 +34,7 @@ class SqlxChatRoomRepository(
     }
 
     override suspend fun addMessage(chatMessage: ChatMessage): ChatMessage {
-        val insertedRows = database.fetchAll(
+        val insertedRows = TransactionContext.current().fetchAll(
             Statement.create(
                 """
                 INSERT INTO chat_messages(room_id, sender_id, content, time_seconds, time_nanos)
@@ -64,7 +63,7 @@ class SqlxChatRoomRepository(
         roomId: RoomId,
         after: Instant?,
     ): List<ChatMessage> {
-        val membership = database.fetchAll(
+        val membership = TransactionContext.current().fetchAll(
             Statement.create(
                 "SELECT 1 FROM room_memberships WHERE room_id = :roomId AND user_id = :userId LIMIT 1",
             )
@@ -98,7 +97,7 @@ class SqlxChatRoomRepository(
                 .bind("afterNanos", after.nanosecondsOfSecond.toLong())
         }
 
-        return database.fetchAll(statement).getOrThrow().map { row ->
+        return TransactionContext.current().fetchAll(statement).getOrThrow().map { row ->
             ChatMessage(
                 sender = UserId(row.get("sender_id").asString()),
                 content = row.get("content").asString(),

@@ -1,5 +1,7 @@
 package preferences.backend
 
+import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.impl.coroutines.TransactionContext
 import io.github.smyrgeorge.sqlx4k.ConnectionPool
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
@@ -23,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatApiError
 import preferences.modeling.ChatClient
+import preferences.modeling.MembershipService
 import preferences.modeling.ChatService
 import preferences.modeling.NotInRoomException
 import preferences.modeling.RoomMembershipRequest
@@ -32,7 +35,7 @@ import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.time.Instant
 
-fun Application.backendModule(chatClient: ChatClient) {
+fun Application.backendModule(database: Driver, chatClient: ChatClient) {
     install(ContentNegotiation) { json() }
     install(StatusPages) {
         exception<Throwable> { call, cause ->
@@ -55,23 +58,25 @@ fun Application.backendModule(chatClient: ChatClient) {
         route("/api/chat") {
             post("/join") {
                 val request = call.receive<RoomMembershipRequest>()
-                chatClient.join(request.userId, request.roomId)
+                TransactionContext.withCurrent(database) { chatClient.join(request.userId, request.roomId) }
                 call.respond(HttpStatusCode.NoContent)
             }
             post("/leave") {
                 val request = call.receive<RoomMembershipRequest>()
-                chatClient.leave(request.userId, request.roomId)
+                TransactionContext.withCurrent(database) { chatClient.leave(request.userId, request.roomId) }
                 call.respond(HttpStatusCode.NoContent)
             }
             post("/messages") {
-                call.respond(HttpStatusCode.Created, chatClient.send(call.receive<SendMessageRequest>()))
+                val request = call.receive<SendMessageRequest>()
+                val message = TransactionContext.withCurrent(database) { chatClient.send(request) }
+                call.respond(HttpStatusCode.Created, message)
             }
             get("/messages") {
-                call.respond(chatClient.pull(
-                    userId = UserId(call.requiredQueryParameter("userId")),
-                    roomId = RoomId(call.requiredQueryParameter("roomId")),
-                    after = call.request.queryParameters["after"]?.let(Instant::parse),
-                ))
+                val userId = UserId(call.requiredQueryParameter("userId"))
+                val roomId = RoomId(call.requiredQueryParameter("roomId"))
+                val after = call.request.queryParameters["after"]?.let(Instant::parse)
+                val messages = TransactionContext.withCurrent(database) { chatClient.pull(userId, roomId, after) }
+                call.respond(messages)
             }
         }
     }
@@ -87,11 +92,13 @@ fun runBackend(
 ): Unit = runBlocking {
     val database = openSqliteDatabase(databaseUrl, ConnectionPool.Options())
     try {
-        val db = SqlxDatabase(database)
-        db.initialize()
-        val chat = ChatService(db)
+        val memberships = SqlxMembershipRepository()
+        val messages = SqlxChatRoomRepository()
+        memberships.initialize(database)
+        messages.initialize(database)
+        val chat = ChatService(MembershipService(memberships), messages)
         embeddedServer(CIO, host = host, port = port) {
-            backendModule(chat)
+            backendModule(database, chat)
         }.start(wait = true)
     } finally {
         database.close().getOrThrow()

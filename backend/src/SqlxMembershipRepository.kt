@@ -1,13 +1,14 @@
 package preferences.backend
 
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
+import io.github.smyrgeorge.sqlx4k.impl.coroutines.TransactionContext
 import io.github.smyrgeorge.sqlx4k.Statement
 import preferences.modeling.MembershipRepository
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 
-class SqlxMembershipRepository(private val database: QueryExecutor) : MembershipRepository {
-    suspend fun initialize() {
+class SqlxMembershipRepository : MembershipRepository {
+    suspend fun initialize(database: QueryExecutor) {
         database.execute(
             """
             CREATE TABLE IF NOT EXISTS room_memberships (
@@ -20,7 +21,7 @@ class SqlxMembershipRepository(private val database: QueryExecutor) : Membership
     }
 
     override suspend fun addUserToRoom(userId: UserId, roomId: RoomId): Boolean {
-        return database.execute(
+        return TransactionContext.current().execute(
             Statement.create(
                 "INSERT INTO room_memberships(room_id, user_id) VALUES (:roomId, :userId) " +
                     "ON CONFLICT(room_id, user_id) DO NOTHING",
@@ -31,7 +32,7 @@ class SqlxMembershipRepository(private val database: QueryExecutor) : Membership
     }
 
     override suspend fun deleteUserFromRoom(userId: UserId, roomId: RoomId) {
-        database.execute(
+        TransactionContext.current().execute(
             Statement.create(
                 "DELETE FROM room_memberships WHERE room_id = :roomId AND user_id = :userId",
             )

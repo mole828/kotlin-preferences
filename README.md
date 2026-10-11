@@ -19,25 +19,21 @@
 
 ### 业务逻辑集中在 modeling
 
-`modeling.ChatService` 通过 `Database.transaction` 执行业务，事务块的接收者是 `TransactionScope`，可以直接访问 `memberships`（`MembershipService`）和 `messages`（`ChatRoomRepository`）：
+`modeling.ChatService` 注入 `MembershipService` 和 `ChatRoomRepository`，负责业务校验、入群消息和消息存取。service 与 repository 在启动时创建并长期复用。业务模块不声明数据库或事务抽象。
+
+后端在请求参数解析完成后，用 sqlx4k 的 `TransactionContext.withCurrent(database)` 包住业务调用，事务成功结束后再发送 HTTP 响应：
 
 ```kotlin
-db.transaction {
-    if (memberships.join(userId, roomId)) {
-        messages.addMessage(
-            ChatMessage(userId, "${userId.value} 加入了群聊", Clock.System.now(), roomId)
-        )
-    }
+val request = call.receive<RoomMembershipRequest>()
+TransactionContext.withCurrent(database) {
+    chatClient.join(request.userId, request.roomId)
 }
+call.respond(HttpStatusCode.NoContent)
 ```
 
-后端 `SqlxDatabase` 开启一次数据库事务，将成员 service 使用的 `SqlxMembershipRepository` 和消息仓库 `SqlxChatRoomRepository` 绑定到同一个事务执行器。正常返回时提交，异常退出或提交前协程已取消时回滚；取消后的回滚在 `NonCancellable` 中执行。入群消息写入失败时，成员关系也会回滚，重试可以完整执行。重复加入不重复发消息。
+两个 SQL repository 每次通过 `TransactionContext.current()` 执行 SQL，事务外调用会报错。在 HTTP 之外使用这些 service 时，调用方也需要建立事务上下文。成员表与消息表由各自 repository 管理，启动时建表。入群消息写入失败并退出事务时，成员关系也一起回滚；重复加入不重复发消息。发送时的成员检查仍与写入放在同一条 SQL 中。
 
-两个 SQL repository 分别管理成员表和消息表，建表在启动时完成，业务方法只执行查询和写入。发送时的成员检查仍与写入放在同一条 SQL 中。HTTP 调用契约 `ChatClient` 保持不变，业务层不依赖 sqlx4k。
-
-这里使用 Kotlin 的接收者 lambda（`suspend TransactionScope.() -> T`），不需要额外开启 `context` 语言特性。事务块内通过 scope 中的 service 和 repository 组合操作；本版每次 `db.transaction` 都开启新事务，不支持嵌套事务传播。不要在事务块内再次调用开启事务的 `ChatService` 方法。异常需要退出事务块才会触发回滚，捕获异常后正常返回仍会提交。
-
-JVM 测试覆盖入群提交与去重、消息写入失败后成员回滚及重试、协程取消后两份仓库的回滚与连接复用，均使用真实 SQLite。
+事务生命周期和嵌套行为直接遵循 sqlx4k 1.12.0：`withCurrent` 复用已有事务，异常被捕获后外层正常返回仍会提交。示例按单数据库、事务内顺序执行使用；不添加自定义传播、回滚标记或取消清理。详见 [sqlx4k TransactionContext](https://github.com/smyrgeorge/sqlx4k#transactioncontext-coroutines)。HTTP 测试直接使用真实 SQLite，验证成员写入与入群消息的原子性、失败重试及错误映射。
 
 前端开发者可以直接阅读这些规则和流程，检查界面行为是否符合业务要求，并参与业务变更的审查。业务代码依赖仓库接口，可以注入内存实现独立测试，也为原型演示提供复用空间。
 
@@ -139,7 +135,7 @@ Kotlin Toolchain 的 `js/app` 仍处于不完整预览阶段，`./kotlin run -m 
 
 当前聊天模块配置已通过 CLI 识别。共享 JSON 契约和 Ktor Client 的 6 项测试已使用缓存编译器执行通过；后端另有 4 项 API 测试通过，覆盖共享 KtorChatClient 对服务的调用和错误映射，使用内存仓库作为测试替身；验证使用 Kotlin 2.4.10、MockEngine 3.5.2，后端官方插件使用缓存的 Ktor 3.5.2（核心运行库 3.6.0），项目声明的工具链为 Kotlin 2.4.20 / Ktor 3.6.0，因此仍需运行正式构建与测试。仓库中的 SQL 已通过 SQLite 执行检查，覆盖成员检查、房间隔离、包含边界的纳秒时间筛选和稳定消息顺序。
 
-sqlx4k SQLite 驱动尚未缓存，当前环境无法访问依赖仓库，真实数据库集成测试与后端完整构建尚未完成。Native 目标的完整编译、链接与运行也尚未验证。正常开发环境应执行上面的共享客户端和后端测试命令，并验证对应 Native 目标。
+以上为早期验证记录。本次事务版本已使用项目声明的依赖通过 JVM modeling/backend 测试，以及 macOS ARM64 Native backend 的编译、链接与测试运行，包含真实 sqlx4k SQLite 集成验证。Linux Native 目标和浏览器完整联调仍需单独验证。
 
 ## 官方资料
 
