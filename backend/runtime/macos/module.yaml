@@ -4,3 +4,7 @@ product:
 
 dependencies:
   - ../..
+
+settings:
+  native:
+    entryPoint: preferences.backend.macos.main
