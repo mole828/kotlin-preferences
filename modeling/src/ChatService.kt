@@ -3,7 +3,6 @@ package preferences.modeling
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
-import kotlin.time.Instant
 import kotlin.time.Clock
 
 class ChatService(
@@ -22,21 +21,18 @@ class ChatService(
         memberships.leave(userId, roomId)
     }
 
-    override suspend fun send(request: SendMessageRequest): ChatMessage = send(
-        ChatMessage(request.sender, request.content, Clock.System.now(), request.roomId)
-    )
-
-    suspend fun send(message: ChatMessage): ChatMessage {
-        validateIds(message.sender, message.roomId)
-        require(message.content.isNotBlank()) { "消息不能为空" }
-        require(message.content.length <= 4000) { "消息最多 4000 字符" }
-        return messages.addMessage(message)
+    override suspend fun send(request: SendMessageRequest): ChatMessage {
+        validateIds(request.sender, request.roomId)
+        require(request.content.isNotBlank()) { "消息不能为空" }
+        require(request.content.length <= 4000) { "消息最多 4000 字符" }
+        return messages.addMessage(
+            ChatMessage(request.sender, request.content, Clock.System.now(), request.roomId)
+        )
     }
 
-    // Inclusive boundary: clients merge by message id, so equal timestamps are not lost.
-    override suspend fun pull(userId: UserId, roomId: RoomId, after: Instant?): List<ChatMessage> {
+    override suspend fun pull(userId: UserId, roomId: RoomId): List<ChatMessage> {
         validateIds(userId, roomId)
-        return messages.pullMessage(userId, roomId, after)
+        return messages.pullMessage(userId, roomId)
     }
 }
 

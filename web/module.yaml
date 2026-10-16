@@ -6,5 +6,5 @@ dependencies:
   - org.jetbrains.kotlin-wrappers:kotlin-react
   - org.jetbrains.kotlin-wrappers:kotlin-react-dom
   - org.jetbrains.kotlin-wrappers:kotlin-browser
-  - io.ktor:ktor-client-js:3.6.0
+  - io.ktor:ktor-client-core:3.6.0
   - org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0

@@ -12,7 +12,3 @@ settings:
 dependencies:
   - $kotlin.serialization.json
   - $ktor.client.core: exported
-
-test-dependencies:
-  - io.ktor:ktor-client-mock
-  - org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0

@@ -13,7 +13,7 @@
 | `jvm` | Kotlin/JVM | JVM 服务启动入口 |
 | `linux` | Kotlin/Native，Linux x64 + ARM64 | Linux 原生服务启动入口 |
 | `macos` | Kotlin/Native，macOS ARM64 | 本地开发用的 macOS 原生服务启动入口 |
-| `modeling` | Kotlin Multiplatform，JVM + JS + Linux/macOS Native | 领域模型、业务规则与用例、仓库接口，以及共享调用契约和 HTTP 客户端 |
+| `modeling` | Kotlin Multiplatform，JVM + JS + Linux/macOS Native | 领域模型、业务规则与用例、仓库接口，以及共享 HTTP 契约 |
 
 依赖方向为 `web → modeling ← backend ← jvm/linux/macos`。前后端共同依赖 `modeling` 中的业务定义，彼此不直接依赖。`backend` 是 `kmp/lib`，共享源码位于 `backend/src/`；三个应用模块位于 `backend/runtime/`，仅调用共享的 `runBackend()`；后端适配代码和各平台启动入口统一收在 `backend/` 目录下。
 
@@ -33,7 +33,7 @@ call.respond(HttpStatusCode.NoContent)
 
 两个 SQL repository 每次通过 `TransactionContext.current()` 执行 SQL，事务外调用会报错。在 HTTP 之外使用这些 service 时，调用方也需要建立事务上下文。成员表与消息表由各自 repository 管理，启动时建表。入群消息写入失败并退出事务时，成员关系也一起回滚；重复加入不重复发消息。发送时的成员检查仍与写入放在同一条 SQL 中。
 
-事务生命周期和嵌套行为直接遵循 sqlx4k 1.12.0：`withCurrent` 复用已有事务，异常被捕获后外层正常返回仍会提交。示例按单数据库、事务内顺序执行使用；不添加自定义传播、回滚标记或取消清理。详见 [sqlx4k TransactionContext](https://github.com/smyrgeorge/sqlx4k#transactioncontext-coroutines)。HTTP 测试直接使用真实 SQLite，验证成员写入与入群消息的原子性、失败重试及错误映射。
+事务生命周期和嵌套行为直接遵循 sqlx4k 1.12.0：`withCurrent` 复用已有事务，异常被捕获后外层正常返回仍会提交。示例按单数据库、事务内顺序执行使用；不添加自定义传播、回滚标记或取消清理。详见 [sqlx4k TransactionContext](https://github.com/smyrgeorge/sqlx4k#transactioncontext-coroutines)。
 
 前端开发者可以直接阅读这些规则和流程，检查界面行为是否符合业务要求，并参与业务变更的审查。业务代码依赖仓库接口，可以注入内存实现独立测试，也为原型演示提供复用空间。
 
@@ -41,7 +41,7 @@ call.respond(HttpStatusCode.NoContent)
 
 ### 调用契约与平台适配
 
-聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口，后端路由只调用这个接口；`modeling.client.KtorChatClient` 也实现同一接口，集中管理 URL、JSON、查询参数和 API 错误。Web 注入 `HttpClient(Js)` 和浏览器同源地址，调用共享客户端并管理界面状态。HttpClient 的创建与关闭由使用它的平台负责。后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
+聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口，后端路由只调用这个接口；`modeling.client.KtorChatClient` 也实现同一接口，集中管理 URL、JSON 和查询参数，HTTP 错误交给 Ktor 默认处理。Web 注入 `HttpClient(Js)` 和浏览器同源地址，调用共享客户端并管理界面状态。HttpClient 的创建与关闭由使用它的平台负责。后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
 
 Kotlin 源码统一由 Kotlin Toolchain 管理，通过 `project.yaml` 聚合各模块，各模块使用 `module.yaml` 声明产品类型和依赖。前端 React Kotlin 包装器通过 Maven BOM 统一版本；React 的 JS 运行时与 Vite 在 `web/package.json` 中声明。
 
@@ -79,9 +79,9 @@ Vite 开发服务器与预览服务器把 `/api` 代理到 `http://127.0.0.1:808
 | `POST /api/chat/join` | `{"userId":"alice","roomId":"lobby"}` | `204`，重复加入无副作用 |
 | `POST /api/chat/leave` | 同上 | `204`，消息仍保留 |
 | `POST /api/chat/messages` | `{"sender":"alice","roomId":"lobby","content":"你好"}` | `201`，包含数据库 ID 和服务端时间的消息 |
-| `GET /api/chat/messages` | `userId`、`roomId`、可选 ISO 时间 `after` | 当前房间的消息列表 |
+| `GET /api/chat/messages` | `userId`、`roomId` | 当前房间的消息列表 |
 
-未加入房间的发送/读取返回 `403`，无效参数返回 `400`。时间边界包含 `after` 本身，客户端按消息 ID 合并去重，避免同一时间戳的消息丢失。首次读取不传 `after`，获取房间历史。消息最多 4000 字符；用户和房间标识最多 80 字符。
+未加入房间的发送/读取返回 `403`，无效参数返回 `400`。前端每 2.5 秒读取房间完整历史，省去增量游标与消息合并逻辑。页面只展示成功流程，异常提示、重试和补偿由具体业务决定；组件卸载时仍关闭 HTTP 客户端并取消协程。消息最多 4000 字符；用户和房间标识最多 80 字符。
 
 macOS ARM64 原生运行：
 
@@ -98,13 +98,6 @@ Linux 原生构建与运行（在 Linux 上执行，按机器架构选择 `linux
 ```
 
 Native 构建需要下载 Kotlin/Native 编译器及平台工具链；macOS 需要安装 Xcode 命令行工具。Linux 二进制的构建与运行应在相应的 Linux 环境验证。
-
-共享客户端与后端测试：
-
-```sh
-./kotlin test -m modeling -m backend -p jvm
-./kotlin test -m backend -p macosArm64
-```
 
 前端需要 Node.js 22.12+（推荐 Node.js 24）和 npm：
 
@@ -125,17 +118,18 @@ npm run preview
 
 修改 Kotlin 源码后，在另一终端运行 `npm run build:kotlin` 或重启 `npm run dev`；当前骨架没有配置 Kotlin 自动监视编译。
 
-## 当前工具链边界
+## 验证与工具链边界
 
-Kotlin Toolchain 的 `js/app` 仍处于不完整预览阶段，`./kotlin run -m web` 不支持直接启动浏览器应用，因此项目使用 Vite 补上开发服务器和 Web 打包。链接目录 `build/artifacts/CompiledWebArtifact/webjsrelease/kotlin-output` 是当前工具链的 release 输出约定，升级版本时需检查 `web/scripts/build-kotlin.mjs`。
+```sh
+./kotlin test -m backend -p jvm
+./kotlin build -m jvm
+cd web
+npm run build
+```
 
-已验证 npm 安装、Kotlin/JS 编译与链接以及 Vite 生产打包。验证环境限制了 Kotlin CLI 的进程查询和本地端口监听，因此编译验证使用同版本的缓存编译器，浏览器页面尚未实测。正常终端仍使用上述 `npm run dev` 命令启动。
+只保留 `backend/test@jvm/ChatDatabaseTest.kt` 一个测试，演示 embedded PostgreSQL → sqlx4k → 事务内聊天室读写。使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，无需手动安装数据库。运行时仍使用 SQLite，因此测试仅为消息表提供 PostgreSQL 的自增列建表语法，复用实际 repository 和 service。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
 
-新聊天页已通过缓存 Kotlin/JS 编译、JS 链接与 Vite 打包，产物包含这次实现的共享客户端与页面；验证使用 Kotlin 2.4.10 / Ktor JS 3.5.2，精确声明版本的构建仍需在正常环境运行。浏览器与真实数据库的完整联调尚未验证。
-
-当前聊天模块配置已通过 CLI 识别。共享 JSON 契约和 Ktor Client 的 6 项测试已使用缓存编译器执行通过；后端另有 4 项 API 测试通过，覆盖共享 KtorChatClient 对服务的调用和错误映射，使用内存仓库作为测试替身；验证使用 Kotlin 2.4.10、MockEngine 3.5.2，后端官方插件使用缓存的 Ktor 3.5.2（核心运行库 3.6.0），项目声明的工具链为 Kotlin 2.4.20 / Ktor 3.6.0，因此仍需运行正式构建与测试。仓库中的 SQL 已通过 SQLite 执行检查，覆盖成员检查、房间隔离、包含边界的纳秒时间筛选和稳定消息顺序。
-
-以上为早期验证记录。本次事务版本已使用项目声明的依赖通过 JVM modeling/backend 测试，以及 macOS ARM64 Native backend 的编译、链接与测试运行，包含真实 sqlx4k SQLite 集成验证。Linux Native 目标和浏览器完整联调仍需单独验证。
+Kotlin Toolchain 0.13 的 `js/app` 仍使用 Vite 补齐浏览器开发与打包。JS 链接任务仅在 release 变体运行，链接目录由 `web/scripts/build-kotlin.mjs` 指定，升级工具链时需检查该脚本。Linux Native 的编译与运行应在 Linux 环境验证。
 
 ## 官方资料
 

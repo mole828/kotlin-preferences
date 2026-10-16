@@ -61,7 +61,6 @@ class SqlxChatRoomRepository : ChatRoomRepository {
     override suspend fun pullMessage(
         userId: UserId,
         roomId: RoomId,
-        after: Instant?,
     ): List<ChatMessage> {
         val membership = TransactionContext.current().fetchAll(
             Statement.create(
@@ -72,30 +71,14 @@ class SqlxChatRoomRepository : ChatRoomRepository {
         ).getOrThrow()
         if (membership.rows.isEmpty()) throw NotInRoomException()
 
-        val statement = if (after == null) {
-            Statement.create(
-                """
-                SELECT id, room_id, sender_id, content, time_seconds, time_nanos
-                FROM chat_messages
-                WHERE room_id = :roomId
-                ORDER BY time_seconds, time_nanos, id
-                """.trimIndent(),
-            ).bind("roomId", roomId.value)
-        } else {
-            Statement.create(
-                """
-                SELECT id, room_id, sender_id, content, time_seconds, time_nanos
-                FROM chat_messages
-                WHERE room_id = :roomId
-                  AND (time_seconds > :afterSeconds OR
-                       (time_seconds = :afterSeconds AND time_nanos >= :afterNanos))
-                ORDER BY time_seconds, time_nanos, id
-                """.trimIndent(),
-            )
-                .bind("roomId", roomId.value)
-                .bind("afterSeconds", after.epochSeconds)
-                .bind("afterNanos", after.nanosecondsOfSecond.toLong())
-        }
+        val statement = Statement.create(
+            """
+            SELECT id, room_id, sender_id, content, time_seconds, time_nanos
+            FROM chat_messages
+            WHERE room_id = :roomId
+            ORDER BY time_seconds, time_nanos, id
+            """.trimIndent(),
+        ).bind("roomId", roomId.value)
 
         return TransactionContext.current().fetchAll(statement).getOrThrow().map { row ->
             ChatMessage(

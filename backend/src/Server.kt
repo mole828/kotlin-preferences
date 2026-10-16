@@ -33,7 +33,6 @@ import preferences.modeling.SendMessageRequest
 import preferences.modeling.projectProfile
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
-import kotlin.time.Instant
 
 fun Application.backendModule(database: Driver, chatClient: ChatClient) {
     install(ContentNegotiation) { json() }
@@ -74,8 +73,7 @@ fun Application.backendModule(database: Driver, chatClient: ChatClient) {
             get("/messages") {
                 val userId = UserId(call.requiredQueryParameter("userId"))
                 val roomId = RoomId(call.requiredQueryParameter("roomId"))
-                val after = call.request.queryParameters["after"]?.let(Instant::parse)
-                val messages = TransactionContext.withCurrent(database) { chatClient.pull(userId, roomId, after) }
+                val messages = TransactionContext.withCurrent(database) { chatClient.pull(userId, roomId) }
                 call.respond(messages)
             }
         }

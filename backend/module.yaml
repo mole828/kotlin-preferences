@@ -16,5 +16,7 @@ dependencies:
   - $ktor.server.statusPages
   - io.github.smyrgeorge:sqlx4k-sqlite:1.12.0
 
-test-dependencies:
-  - $ktor.server.testHost
+test-dependencies@jvm:
+  - io.github.smyrgeorge:sqlx4k-postgres:1.12.0
+  - bom: io.zonky.test.postgres:embedded-postgres-binaries-bom:18.3.0
+  - io.zonky.test:embedded-postgres:2.2.2
