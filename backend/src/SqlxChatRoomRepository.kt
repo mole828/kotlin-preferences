@@ -1,7 +1,6 @@
 package preferences.backend
 
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.impl.coroutines.TransactionContext
 import io.github.smyrgeorge.sqlx4k.Statement
 import preferences.modeling.ChatRoomRepository
 import preferences.modeling.NotInRoomException
@@ -13,9 +12,10 @@ import kotlin.time.Instant
 const val DEFAULT_CHAT_DATABASE_URL = "sqlite://chat.db"
 
 /** SQLite-backed repository shared by the JVM and Kotlin/Native server targets. */
-class SqlxChatRoomRepository : ChatRoomRepository {
-    suspend fun initialize(database: QueryExecutor) {
-        database.execute(
+class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepository {
+    suspend fun initialize() {
+        val executor = database.currentExecutor()
+        executor.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,14 +27,14 @@ class SqlxChatRoomRepository : ChatRoomRepository {
             )
             """.trimIndent(),
         ).getOrThrow()
-        database.execute(
+        executor.execute(
             "CREATE INDEX IF NOT EXISTS chat_messages_room_time_id " +
                 "ON chat_messages(room_id, time_seconds, time_nanos, id)",
         ).getOrThrow()
     }
 
     override suspend fun addMessage(chatMessage: ChatMessage): ChatMessage {
-        val insertedRows = TransactionContext.current().fetchAll(
+        val insertedRows = database.currentExecutor().fetchAll(
             Statement.create(
                 """
                 INSERT INTO chat_messages(room_id, sender_id, content, time_seconds, time_nanos)
@@ -62,7 +62,8 @@ class SqlxChatRoomRepository : ChatRoomRepository {
         userId: UserId,
         roomId: RoomId,
     ): List<ChatMessage> {
-        val membership = TransactionContext.current().fetchAll(
+        val executor = database.currentExecutor()
+        val membership = executor.fetchAll(
             Statement.create(
                 "SELECT 1 FROM room_memberships WHERE room_id = :roomId AND user_id = :userId LIMIT 1",
             )
@@ -80,7 +81,7 @@ class SqlxChatRoomRepository : ChatRoomRepository {
             """.trimIndent(),
         ).bind("roomId", roomId.value)
 
-        return TransactionContext.current().fetchAll(statement).getOrThrow().map { row ->
+        return executor.fetchAll(statement).getOrThrow().map { row ->
             ChatMessage(
                 sender = UserId(row.get("sender_id").asString()),
                 content = row.get("content").asString(),

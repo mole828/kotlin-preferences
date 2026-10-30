@@ -1,8 +1,8 @@
 package preferences.backend
 
+import io.github.smyrgeorge.sqlx4k.ConnectionPool
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.impl.coroutines.TransactionContext
-import io.github.smyrgeorge.sqlx4k.ConnectionPool
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
@@ -90,10 +90,10 @@ fun runBackend(
 ): Unit = runBlocking {
     val database = openSqliteDatabase(databaseUrl, ConnectionPool.Options())
     try {
-        val memberships = SqlxMembershipRepository()
-        val messages = SqlxChatRoomRepository()
-        memberships.initialize(database)
-        messages.initialize(database)
+        val memberships = SqlxMembershipRepository(database)
+        val messages = SqlxChatRoomRepository(database)
+        memberships.initialize()
+        messages.initialize()
         val chat = ChatService(MembershipService(memberships), messages)
         embeddedServer(CIO, host = host, port = port) {
             backendModule(database, chat)
