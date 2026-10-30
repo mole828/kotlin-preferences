@@ -19,7 +19,7 @@
 
 ### 业务逻辑集中在 modeling
 
-`modeling.ChatService` 注入 `MembershipService` 和 `ChatRoomRepository`，负责业务校验、入群消息和消息存取。service 与 repository 在启动时创建并长期复用。业务模块不声明数据库或事务抽象。
+`modeling.ChatService` 注入 `MembershipService`、`ChatRoomRepository` 和 `Atomicity`，负责业务校验、入群消息和消息存取。service 与 repository 在启动时创建并长期复用。业务模块不依赖具体数据库或 sqlx4k；`Atomicity.atomic` 提供用例需要的原子执行能力，构造 service 时注入一次。
 
 后端在请求参数解析完成后，用 sqlx4k 的 `TransactionContext.withCurrent(database)` 包住业务调用，事务成功结束后再发送 HTTP 响应：
 
@@ -31,9 +31,9 @@ TransactionContext.withCurrent(database) {
 call.respond(HttpStatusCode.NoContent)
 ```
 
-两个 SQL repository 在构造时接收默认 `QueryExecutor`，通过 backend 的扩展函数 `database.currentExecutor()` 获取执行器：有事务上下文时使用当前事务，没有时使用默认 executor。SQL 失败直接向上抛出，不切换执行器重试。HTTP 调用保留事务边界；事务外也可以调用 service，但多条 SQL 不保证整体提交或回滚。
+两个 SQL repository 接收默认 `QueryExecutor`，通过 backend 的扩展函数 `database.currentExecutor()` 获取执行器：有事务上下文时使用当前事务，没有时使用默认数据库执行器。SQL 失败直接向上抛出，不切换执行器重试。backend 的 `SqlxAtomicity` 接收同一数据库的 `Driver`，通过 sqlx4k 的 `TransactionContext.withCurrent` 复用或建立事务，仓库接口不负责管理事务。
 
-成员表与消息表由各自 repository 管理，启动时建表。事务内入群消息写入失败时，成员关系一起回滚；重复加入不重复发消息。发送时的成员检查与写入保持在同一条 SQL 中。
+`ChatService.join` 在同一个 `atomicity.atomic` 中完成加入房间和写入入群消息，即使调用方没有建立事务也不会降级为两次独立提交；有外层事务时参与该事务，不提前提交。入群消息写入失败时，成员关系一起回滚；重复加入不重复发消息。其他操作保留默认执行器回退，发送时的成员检查与写入保持在同一条 SQL 中。成员表与消息表由各自 repository 管理，启动时建表。
 
 当前按单数据库使用，事务生命周期沿用 sqlx4k 1.12.0：`withCurrent` 复用已有事务，不添加自定义 key 或事务传播规则。详见 [sqlx4k TransactionContext](https://github.com/smyrgeorge/sqlx4k#transactioncontext-coroutines)。
 
@@ -129,7 +129,7 @@ cd web
 npm run build
 ```
 
-`backend/test@jvm/ChatDatabaseTest.kt` 包含一个集成测试，覆盖事务内聊天室读写、重复入群、入群失败回滚，以及无事务时使用默认执行器。使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，无需手动安装数据库。运行时仍使用 SQLite，因此测试仅为消息表提供 PostgreSQL 的自增列建表语法，复用实际 repository 和 service。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
+`backend/test@jvm/ChatDatabaseTest.kt` 包含一个集成测试，覆盖事务内聊天室读写、重复入群、直接入群失败回滚、入群参与外层事务，以及无事务时使用默认执行器。使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，无需手动安装数据库。运行时仍使用 SQLite，因此测试仅为消息表提供 PostgreSQL 的自增列建表语法，复用实际 repository 和 service。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
 
 Kotlin Toolchain 0.13 的 `js/app` 仍使用 Vite 补齐浏览器开发与打包。JS 链接任务仅在 release 变体运行，链接目录由 `web/scripts/build-kotlin.mjs` 指定，升级工具链时需检查该脚本。Linux Native 的编译与运行应在 Linux 环境验证。
 

@@ -7,13 +7,16 @@ import kotlin.time.Clock
 
 class ChatService(
     private val memberships: MembershipService,
-    private val messages: ChatRoomRepository,
+    private val rooms: ChatRoomRepository,
+    private val atomicity: Atomicity,
 ) : ChatClient {
     override suspend fun join(userId: UserId, roomId: RoomId) {
-        if (memberships.join(userId, roomId)) {
-            messages.addMessage(
-                ChatMessage(userId, "${userId.value} 加入了群聊", Clock.System.now(), roomId)
-            )
+        atomicity.atomic {
+            if (memberships.join(userId, roomId)) {
+                rooms.addMessage(
+                    ChatMessage(userId, "${userId.value} 加入了群聊", Clock.System.now(), roomId)
+                )
+            }
         }
     }
 
@@ -25,14 +28,14 @@ class ChatService(
         validateIds(request.sender, request.roomId)
         require(request.content.isNotBlank()) { "消息不能为空" }
         require(request.content.length <= 4000) { "消息最多 4000 字符" }
-        return messages.addMessage(
+        return rooms.addMessage(
             ChatMessage(request.sender, request.content, Clock.System.now(), request.roomId)
         )
     }
 
     override suspend fun pull(userId: UserId, roomId: RoomId): List<ChatMessage> {
         validateIds(userId, roomId)
-        return messages.pullMessage(userId, roomId)
+        return rooms.pullMessage(userId, roomId)
     }
 }
 

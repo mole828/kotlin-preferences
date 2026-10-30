@@ -42,7 +42,11 @@ class ChatDatabaseTest {
                     )
                     """.trimIndent(),
                 ).getOrThrow()
-                val chat = ChatService(MembershipService(memberships), messages)
+                val chat = ChatService(
+                    memberships = MembershipService(memberships),
+                    rooms = messages,
+                    atomicity = SqlxAtomicity(database),
+                )
                 val user = UserId("alice")
                 val room = RoomId("lobby")
                 TransactionContext.withCurrent(database) {
@@ -53,9 +57,9 @@ class ChatDatabaseTest {
                     assertEquals(listOf("alice 加入了群聊", "你好"), chat.pull(user, room).map { it.content })
                 }
 
-                // A database constraint rejects the welcome message after membership insertion.
+                // A direct join must roll back membership when the welcome message fails.
                 assertFailsWith<SQLError> {
-                    TransactionContext.withCurrent(database) { chat.join(UserId("blocked"), room) }
+                    chat.join(UserId("blocked"), room)
                 }
                 val blockedMemberships = database.fetchAll(
                     "SELECT COUNT(*) AS count FROM room_memberships WHERE user_id = 'blocked'",
@@ -65,10 +69,26 @@ class ChatDatabaseTest {
                     assertEquals(listOf("alice 加入了群聊", "你好"), chat.pull(user, room).map { it.content })
                 }
 
-                // With no transaction, all repository operations use the default executor.
+                // A join must participate in the caller's transaction, not commit independently.
+                assertFailsWith<IllegalStateException> {
+                    TransactionContext.withCurrent(database) {
+                        chat.join(user, RoomId("outer-rollback"))
+                        error("Abort after joining")
+                    }
+                }
+                for (table in listOf("room_memberships", "chat_messages")) {
+                    val rows = database.fetchAll(
+                        "SELECT COUNT(*) AS count FROM $table WHERE room_id = 'outer-rollback'",
+                    ).getOrThrow()
+                    assertEquals(0L, rows.first().get("count").asString().toLong())
+                }
+
+                // Outside join's transaction, single-statement operations use the default executor.
                 assertSame(database, database.currentExecutor())
                 val bob = UserId("bob")
                 chat.join(bob, room)
+                chat.join(bob, room)
+                assertSame(database, database.currentExecutor())
                 chat.send(SendMessageRequest(bob, room, "默认执行器"))
                 assertEquals("默认执行器", chat.pull(bob, room).last().content)
                 chat.leave(bob, room)

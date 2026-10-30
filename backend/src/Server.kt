@@ -94,7 +94,11 @@ fun runBackend(
         val messages = SqlxChatRoomRepository(database)
         memberships.initialize()
         messages.initialize()
-        val chat = ChatService(MembershipService(memberships), messages)
+        val chat = ChatService(
+            memberships = MembershipService(memberships),
+            rooms = messages,
+            atomicity = SqlxAtomicity(database),
+        )
         embeddedServer(CIO, host = host, port = port) {
             backendModule(database, chat)
         }.start(wait = true)
