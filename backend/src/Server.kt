@@ -1,8 +1,6 @@
 package preferences.backend
 
 import io.github.smyrgeorge.sqlx4k.ConnectionPool
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.impl.coroutines.TransactionContext
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
@@ -34,7 +32,7 @@ import preferences.modeling.projectProfile
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 
-fun Application.backendModule(database: Driver, chatClient: ChatClient) {
+fun Application.backendModule(chatClient: ChatClient) {
     install(ContentNegotiation) { json() }
     install(StatusPages) {
         exception<Throwable> { call, cause ->
@@ -57,23 +55,23 @@ fun Application.backendModule(database: Driver, chatClient: ChatClient) {
         route("/api/chat") {
             post("/join") {
                 val request = call.receive<RoomMembershipRequest>()
-                TransactionContext.withCurrent(database) { chatClient.join(request.userId, request.roomId) }
+                chatClient.join(request.userId, request.roomId)
                 call.respond(HttpStatusCode.NoContent)
             }
             post("/leave") {
                 val request = call.receive<RoomMembershipRequest>()
-                TransactionContext.withCurrent(database) { chatClient.leave(request.userId, request.roomId) }
+                chatClient.leave(request.userId, request.roomId)
                 call.respond(HttpStatusCode.NoContent)
             }
             post("/messages") {
                 val request = call.receive<SendMessageRequest>()
-                val message = TransactionContext.withCurrent(database) { chatClient.send(request) }
+                val message = chatClient.send(request)
                 call.respond(HttpStatusCode.Created, message)
             }
             get("/messages") {
                 val userId = UserId(call.requiredQueryParameter("userId"))
                 val roomId = RoomId(call.requiredQueryParameter("roomId"))
-                val messages = TransactionContext.withCurrent(database) { chatClient.pull(userId, roomId) }
+                val messages = chatClient.pull(userId, roomId)
                 call.respond(messages)
             }
         }
@@ -100,7 +98,7 @@ fun runBackend(
             atomicity = SqlxAtomicity(database),
         )
         embeddedServer(CIO, host = host, port = port) {
-            backendModule(database, chat)
+            backendModule(chat)
         }.start(wait = true)
     } finally {
         database.close().getOrThrow()

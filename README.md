@@ -21,19 +21,30 @@
 
 `modeling.ChatService` 注入 `MembershipService`、`ChatRoomRepository` 和 `Atomicity`，负责业务校验、入群消息和消息存取。service 与 repository 在启动时创建并长期复用。业务模块不依赖具体数据库或 sqlx4k；`Atomicity.atomic` 提供用例需要的原子执行能力，构造 service 时注入一次。
 
-后端在请求参数解析完成后，用 sqlx4k 的 `TransactionContext.withCurrent(database)` 包住业务调用，事务成功结束后再发送 HTTP 响应：
+事务边界由用例的原子性要求决定，统一通过 `Atomicity` 声明在 `modeling` 中。后端路由不建立事务，只解析参数、调用业务并返回响应：
 
 ```kotlin
 val request = call.receive<RoomMembershipRequest>()
-TransactionContext.withCurrent(database) {
-    chatClient.join(request.userId, request.roomId)
-}
+chatClient.join(request.userId, request.roomId)
 call.respond(HttpStatusCode.NoContent)
 ```
 
 两个 SQL repository 接收默认 `QueryExecutor`，通过 backend 的扩展函数 `database.currentExecutor()` 获取执行器：有事务上下文时使用当前事务，没有时使用默认数据库执行器。SQL 失败直接向上抛出，不切换执行器重试。backend 的 `SqlxAtomicity` 接收同一数据库的 `Driver`，通过 sqlx4k 的 `TransactionContext.withCurrent` 复用或建立事务，仓库接口不负责管理事务。
 
-`ChatService.join` 在同一个 `atomicity.atomic` 中完成加入房间和写入入群消息，即使调用方没有建立事务也不会降级为两次独立提交；有外层事务时参与该事务，不提前提交。入群消息写入失败时，成员关系一起回滚；重复加入不重复发消息。其他操作保留默认执行器回退，发送时的成员检查与写入保持在同一条 SQL 中。成员表与消息表由各自 repository 管理，启动时建表。
+`ChatService.join` 在同一个 `atomicity.atomic` 中完成加入房间和写入入群消息，即使调用方没有建立事务也不会降级为两次独立提交；有外层事务时参与该事务，不提前提交。入群消息写入失败时，成员关系一起回滚；重复加入不重复发消息。其他操作不需要跨语句原子性，直接使用默认执行器；发送时的成员检查与写入保持在同一条 SQL 中。新增需要多步写入的用例时，在 service 中用 `atomicity.atomic` 包住这些步骤。成员表与消息表由各自 repository 管理，启动时建表。
+
+临时组合多个业务调用、又需要原子性时（例如尚未沉淀为用例的换房间），路由可以使用与 `ChatService` 相同的 `Atomicity` 实例，而不是直接调用 sqlx4k：
+
+```kotlin
+val request = call.receive<SwitchRoomRequest>()
+atomicity.atomic {
+    chatClient.leave(request.userId, request.fromRoomId)
+    chatClient.join(request.userId, request.toRoomId)
+}
+call.respond(HttpStatusCode.NoContent)
+```
+
+`join` 内部的 `atomic` 会参与这个外层事务，任一步失败时整体回滚。`call.respond` 放在 `atomic` 之外：事务提交成功后才响应，也避免网络写出期间占用事务。这种组合一旦成为稳定的业务规则，应移入 `ChatService`，路由恢复为单次业务调用。
 
 当前按单数据库使用，事务生命周期沿用 sqlx4k 1.12.0：`withCurrent` 复用已有事务，不添加自定义 key 或事务传播规则。详见 [sqlx4k TransactionContext](https://github.com/smyrgeorge/sqlx4k#transactioncontext-coroutines)。
 
