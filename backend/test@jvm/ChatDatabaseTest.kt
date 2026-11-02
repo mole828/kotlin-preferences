@@ -6,7 +6,6 @@ import io.github.smyrgeorge.sqlx4k.postgres.PostgreSQL
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatService
-import preferences.modeling.MembershipService
 import preferences.modeling.NotInRoomException
 import preferences.modeling.SendMessageRequest
 import preferences.modeling.types.RoomId
@@ -43,7 +42,7 @@ class ChatDatabaseTest {
                     """.trimIndent(),
                 ).getOrThrow()
                 val chat = ChatService(
-                    memberships = MembershipService(memberships),
+                    memberships = memberships,
                     rooms = messages,
                     atomicity = SqlxAtomicity(database),
                 )

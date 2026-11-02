@@ -23,7 +23,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatApiError
 import preferences.modeling.ChatClient
-import preferences.modeling.MembershipService
 import preferences.modeling.ChatService
 import preferences.modeling.NotInRoomException
 import preferences.modeling.RoomMembershipRequest
@@ -93,7 +92,7 @@ fun runBackend(
         memberships.initialize()
         messages.initialize()
         val chat = ChatService(
-            memberships = MembershipService(memberships),
+            memberships = memberships,
             rooms = messages,
             atomicity = SqlxAtomicity(database),
         )

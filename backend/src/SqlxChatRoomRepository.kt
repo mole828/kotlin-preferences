@@ -3,7 +3,6 @@ package preferences.backend
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
 import preferences.modeling.ChatRoomRepository
-import preferences.modeling.NotInRoomException
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
@@ -38,11 +37,7 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
             Statement.create(
                 """
                 INSERT INTO chat_messages(room_id, sender_id, content, time_seconds, time_nanos)
-                SELECT :roomId, :senderId, :content, :timeSeconds, :timeNanos
-                WHERE EXISTS (
-                    SELECT 1 FROM room_memberships
-                    WHERE room_id = :roomId AND user_id = :senderId
-                )
+                VALUES (:roomId, :senderId, :content, :timeSeconds, :timeNanos)
                 RETURNING id
                 """.trimIndent(),
             )
@@ -53,25 +48,11 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
                 .bind("timeNanos", chatMessage.time.nanosecondsOfSecond.toLong()),
         ).getOrThrow()
 
-        val id = insertedRows.firstOrNull()?.get("id")?.asString()?.toLong()
-            ?: throw NotInRoomException()
+        val id = insertedRows.first().get("id").asString().toLong()
         return chatMessage.copy(id = id)
     }
 
-    override suspend fun pullMessage(
-        userId: UserId,
-        roomId: RoomId,
-    ): List<ChatMessage> {
-        val executor = database.currentExecutor()
-        val membership = executor.fetchAll(
-            Statement.create(
-                "SELECT 1 FROM room_memberships WHERE room_id = :roomId AND user_id = :userId LIMIT 1",
-            )
-                .bind("roomId", roomId.value)
-                .bind("userId", userId.value),
-        ).getOrThrow()
-        if (membership.rows.isEmpty()) throw NotInRoomException()
-
+    override suspend fun messagesIn(roomId: RoomId): List<ChatMessage> {
         val statement = Statement.create(
             """
             SELECT id, room_id, sender_id, content, time_seconds, time_nanos
@@ -81,7 +62,7 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
             """.trimIndent(),
         ).bind("roomId", roomId.value)
 
-        return executor.fetchAll(statement).getOrThrow().map { row ->
+        return database.currentExecutor().fetchAll(statement).getOrThrow().map { row ->
             ChatMessage(
                 sender = UserId(row.get("sender_id").asString()),
                 content = row.get("content").asString(),

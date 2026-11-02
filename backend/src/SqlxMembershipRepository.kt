@@ -39,4 +39,15 @@ class SqlxMembershipRepository(private val database: QueryExecutor) : Membership
                 .bind("userId", userId.value),
         ).getOrThrow()
     }
+
+    override suspend fun isMember(userId: UserId, roomId: RoomId): Boolean {
+        val rows = database.currentExecutor().fetchAll(
+            Statement.create(
+                "SELECT 1 FROM room_memberships WHERE room_id = :roomId AND user_id = :userId LIMIT 1",
+            )
+                .bind("roomId", roomId.value)
+                .bind("userId", userId.value),
+        ).getOrThrow()
+        return rows.rows.isNotEmpty()
+    }
 }
