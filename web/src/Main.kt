@@ -61,27 +61,30 @@ private val App = FC<Props> {
         }
     }
 
+    fun runExclusive(action: suspend () -> Unit) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            try { action() } finally { busy = false }
+        }
+    }
+
     fun join() {
         val newUser = nickname.trim()
         val newRoom = roomName.trim()
-        if (busy || joined || newUser.isEmpty() || newRoom.isEmpty()) return
-        busy = true
-        scope.launch {
+        if (joined || newUser.isEmpty() || newRoom.isEmpty()) return
+        runExclusive {
             chatClient.join(UserId(newUser), RoomId(newRoom))
             messages = emptyList(); user = UserId(newUser); room = RoomId(newRoom)
-            busy = false
         }
     }
 
     fun leave() {
         val currentUser = user ?: return
         val currentRoom = room ?: return
-        if (busy) return
-        busy = true
-        scope.launch {
+        runExclusive {
             chatClient.leave(currentUser, currentRoom)
             user = null; room = null; messages = emptyList(); draft = ""
-            busy = false
         }
     }
 
@@ -89,13 +92,11 @@ private val App = FC<Props> {
         val currentUser = user ?: return
         val currentRoom = room ?: return
         val content = draft.trim()
-        if (busy || content.isEmpty()) return
-        busy = true
-        scope.launch {
+        if (content.isEmpty()) return
+        runExclusive {
             chatClient.send(SendMessageRequest(currentUser, currentRoom, MessageContent(content)))
             draft = ""
             messages = chatClient.pull(currentUser, currentRoom)
-            busy = false
         }
     }
 
