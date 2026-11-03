@@ -50,7 +50,7 @@ call.respond(HttpStatusCode.NoContent)
 
 当前按单数据库使用，事务生命周期沿用 sqlx4k 1.12.0：`withCurrent` 复用已有事务，不添加自定义 key 或事务传播规则。详见 [sqlx4k TransactionContext](https://github.com/smyrgeorge/sqlx4k#transactioncontext-coroutines)。
 
-前端开发者可以直接阅读这些规则和流程，检查界面行为是否符合业务要求，并参与业务变更的审查。业务代码依赖仓库接口，可以注入内存实现独立测试，也为原型演示提供复用空间。
+前端开发者可以直接阅读这些规则和流程，检查界面行为是否符合业务要求，并参与业务变更的审查。业务代码依赖仓库接口，测试时注入实际 repository，在嵌入式数据库上验证业务规则；仓库接口也为原型演示提供替换空间。
 
 共享源码与实际执行位置分别由模块组织和运行时装配决定。当前 Web 通过 HTTP 调用后端，由后端执行 `ChatService` 中的业务逻辑与校验；前端能够检查或复用规则，服务端仍负责保证请求有效。
 
