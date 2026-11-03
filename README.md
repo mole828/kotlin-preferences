@@ -67,15 +67,17 @@ macOS / Linux 使用 `./kotlin`，Windows 使用 `kotlin.bat`。包装脚本首�
 ```sh
 ./kotlin show modules
 ./kotlin build
+docker compose up -d
 ./kotlin run -m jvm
 ```
 
-后端使用 Ktor 3.6.0 和 CIO 引擎，默认监听 `127.0.0.1:8080`。`GET /` 返回项目技术信息，`GET /health` 返回 `OK`。聊天记录与房间成员通过 sqlx4k 1.12.0 存入 SQLite；默认数据库文件为启动工作目录下的 `chat.db`，重启后保留消息。共享入口 `runBackend(host, port)` 可指定监听地址和端口。不同平台若要读取同一份数据，应使用同一个数据库文件路径。业务逻辑与仓库接口位于 `modeling/src/`，HTTP 路由与 SQL 实现位于 `backend/src/`；`backend/src@jvm/` 与 `backend/src@native/` 仅负责构造对应平台的 SQLite 驱动。
+后端使用 Ktor 3.6.0 和 CIO 引擎，默认监听 `127.0.0.1:8080`。`GET /` 返回项目技术信息，`GET /health` 返回 `OK`。聊天记录与房间成员通过 sqlx4k 1.12.0 存入 PostgreSQL。根目录的 `compose.yaml` 提供本地 PostgreSQL 18，`docker compose up -d` 启动后数据保存在 Docker volume 中，重启后保留消息；`docker compose down -v` 连同数据一起删除。共享入口 `runBackend` 可指定监听地址、端口和数据库连接，默认值与 `compose.yaml` 一致；JVM 与原生服务连接同一个数据库，读取同一份数据。业务逻辑与仓库接口位于 `modeling/src/`，HTTP 路由与 SQL 实现位于 `backend/src/`，sqlx4k 的 PostgreSQL 驱动在公共源码中构造，各平台无需单独适配。
 
 本地开发同时启动后端与 Web：
 
 ```sh
-# 终端一：也可用 ./kotlin run -m macos
+# 终端一：先启动数据库；后端也可用 ./kotlin run -m linux 或 -m macos
+docker compose up -d
 ./kotlin run -m jvm
 
 # 终端二
@@ -142,7 +144,7 @@ cd web
 npm run build
 ```
 
-`backend/test@jvm/ChatDatabaseTest.kt` 包含一个集成测试，覆盖事务内聊天室读写、重复入群、直接入群失败回滚、入群参与外层事务，以及无事务时使用默认执行器。使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，无需手动安装数据库。运行时仍使用 SQLite，因此测试仅为消息表提供 PostgreSQL 的自增列建表语法，复用实际 repository 和 service。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
+`backend/test@jvm/ChatDatabaseTest.kt` 包含一个集成测试，覆盖事务内聊天室读写、重复入群、直接入群失败回滚、入群参与外层事务，以及无事务时使用默认执行器。使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，不依赖 Docker 或 `compose.yaml`。测试复用实际 repository 的建表语句和 service，只额外添加一个让指定入群消息写入失败的约束，用于验证回滚。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
 
 Kotlin Toolchain 0.13 的 `js/app` 仍使用 Vite 补齐浏览器开发与打包。JS 链接任务仅在 release 变体运行，链接目录由 `web/scripts/build-kotlin.mjs` 指定，升级工具链时需检查该脚本。Linux Native 的编译与运行应在 Linux 环境验证。
 

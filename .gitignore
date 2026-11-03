@@ -4,12 +4,6 @@ build/
 .kotlin-toolchain/
 .konan/
 
-# 本地聊天数据库
-chat.db
-chat.db-shm
-chat.db-wal
-chat.db-journal
-
 # Web 依赖、链接产物和打包结果
 node_modules/
 /web/dist/

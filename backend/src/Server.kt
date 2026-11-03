@@ -1,6 +1,6 @@
 package preferences.backend
 
-import io.github.smyrgeorge.sqlx4k.ConnectionPool
+import io.github.smyrgeorge.sqlx4k.postgres.PostgreSQL
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
@@ -80,12 +80,15 @@ fun Application.backendModule(chatClient: ChatClient) {
 private fun ApplicationCall.requiredQueryParameter(name: String): String =
     request.queryParameters[name] ?: throw BadRequestException("Missing query parameter: $name")
 
+/** Defaults match the PostgreSQL service in compose.yaml. */
 fun runBackend(
     host: String = "127.0.0.1",
     port: Int = 8080,
-    databaseUrl: String = DEFAULT_CHAT_DATABASE_URL,
+    databaseUrl: String = "postgresql://localhost:5432/postgres",
+    databaseUser: String = "postgres",
+    databasePassword: String = "postgres",
 ): Unit = runBlocking {
-    val database = openSqliteDatabase(databaseUrl, ConnectionPool.Options())
+    val database = PostgreSQL(url = databaseUrl, username = databaseUser, password = databasePassword)
     try {
         val memberships = SqlxMembershipRepository(database)
         val messages = SqlxChatRoomRepository(database)

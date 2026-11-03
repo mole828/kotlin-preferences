@@ -29,18 +29,11 @@ class ChatDatabaseTest {
                 val memberships = SqlxMembershipRepository(database)
                 val messages = SqlxChatRoomRepository(database)
                 memberships.initialize()
-                // The runtime uses SQLite; this test supplies PostgreSQL's identity column syntax.
+                messages.initialize()
+                // Test-only constraint that makes the welcome message for "blocked" fail.
                 database.execute(
-                    """
-                    CREATE TABLE chat_messages (
-                        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        room_id TEXT NOT NULL,
-                        sender_id TEXT NOT NULL,
-                        content TEXT NOT NULL CHECK (content <> 'blocked 加入了群聊'),
-                        time_seconds BIGINT NOT NULL,
-                        time_nanos INTEGER NOT NULL
-                    )
-                    """.trimIndent(),
+                    "ALTER TABLE chat_messages ADD CONSTRAINT block_welcome " +
+                        "CHECK (content <> 'blocked 加入了群聊')",
                 ).getOrThrow()
                 val chat = ChatService(
                     memberships = memberships,

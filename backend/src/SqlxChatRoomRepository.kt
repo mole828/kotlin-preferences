@@ -9,20 +9,18 @@ import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.time.Instant
 
-const val DEFAULT_CHAT_DATABASE_URL = "sqlite://chat.db"
-
-/** SQLite-backed repository shared by the JVM and Kotlin/Native server targets. */
+/** PostgreSQL-backed repository shared by the JVM and Kotlin/Native server targets. */
 class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepository {
     suspend fun initialize() {
         val executor = database.currentExecutor()
         executor.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 room_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
                 content TEXT NOT NULL,
-                time_seconds INTEGER NOT NULL,
+                time_seconds BIGINT NOT NULL,
                 time_nanos INTEGER NOT NULL CHECK (time_nanos BETWEEN 0 AND 999999999)
             )
             """.trimIndent(),
