@@ -4,6 +4,7 @@ import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
 import preferences.modeling.ChatRoomRepository
 import preferences.modeling.types.ChatMessage
+import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.time.Instant
@@ -43,7 +44,7 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
             )
                 .bind("roomId", chatMessage.roomId.value)
                 .bind("senderId", chatMessage.sender.value)
-                .bind("content", chatMessage.content)
+                .bind("content", chatMessage.content.value)
                 .bind("timeSeconds", chatMessage.time.epochSeconds)
                 .bind("timeNanos", chatMessage.time.nanosecondsOfSecond.toLong()),
         ).getOrThrow()
@@ -65,7 +66,7 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
         return database.currentExecutor().fetchAll(statement).getOrThrow().map { row ->
             ChatMessage(
                 sender = UserId(row.get("sender_id").asString()),
-                content = row.get("content").asString(),
+                content = MessageContent(row.get("content").asString()),
                 time = Instant.fromEpochSeconds(
                     row.get("time_seconds").asString().toLong(),
                     row.get("time_nanos").asString().toLong(),

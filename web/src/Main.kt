@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import preferences.modeling.SendMessageRequest
 import preferences.modeling.client.KtorChatClient
 import preferences.modeling.types.ChatMessage
+import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import react.FC
@@ -91,7 +92,7 @@ private val App = FC<Props> {
         if (busy || content.isEmpty()) return
         busy = true
         scope.launch {
-            chatClient.send(SendMessageRequest(currentUser, currentRoom, content))
+            chatClient.send(SendMessageRequest(currentUser, currentRoom, MessageContent(content)))
             draft = ""
             messages = chatClient.pull(currentUser, currentRoom)
             busy = false
@@ -124,7 +125,7 @@ private val App = FC<Props> {
                 className = ClassName("messages")
                 messages.forEach { message -> div {
                     className = ClassName("message"); key = Key(message.id.toString())
-                    strong { +message.sender.value }; p { +message.content }
+                    strong { +message.sender.value }; p { +message.content.value }
                 } }
             }
             div {

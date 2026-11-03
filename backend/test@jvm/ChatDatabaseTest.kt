@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatService
 import preferences.modeling.NotInRoomException
 import preferences.modeling.SendMessageRequest
+import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.test.Test
@@ -52,8 +53,8 @@ class ChatDatabaseTest {
                     assertSame(this, database.currentExecutor())
                     chat.join(user, room)
                     chat.join(user, room)
-                    chat.send(SendMessageRequest(user, room, "你好"))
-                    assertEquals(listOf("alice 加入了群聊", "你好"), chat.pull(user, room).map { it.content })
+                    chat.send(SendMessageRequest(user, room, MessageContent("你好")))
+                    assertEquals(listOf("alice 加入了群聊", "你好"), chat.pull(user, room).map { it.content.value })
                 }
 
                 // A direct join must roll back membership when the welcome message fails.
@@ -65,7 +66,7 @@ class ChatDatabaseTest {
                 ).getOrThrow()
                 assertEquals(0L, blockedMemberships.first().get("count").asString().toLong())
                 TransactionContext.withCurrent(database) {
-                    assertEquals(listOf("alice 加入了群聊", "你好"), chat.pull(user, room).map { it.content })
+                    assertEquals(listOf("alice 加入了群聊", "你好"), chat.pull(user, room).map { it.content.value })
                 }
 
                 // A join must participate in the caller's transaction, not commit independently.
@@ -88,11 +89,11 @@ class ChatDatabaseTest {
                 chat.join(bob, room)
                 chat.join(bob, room)
                 assertSame(database, database.currentExecutor())
-                chat.send(SendMessageRequest(bob, room, "默认执行器"))
-                assertEquals("默认执行器", chat.pull(bob, room).last().content)
+                chat.send(SendMessageRequest(bob, room, MessageContent("默认执行器")))
+                assertEquals("默认执行器", chat.pull(bob, room).last().content.value)
                 chat.leave(bob, room)
                 assertFailsWith<NotInRoomException> {
-                    chat.send(SendMessageRequest(bob, room, "已离开房间"))
+                    chat.send(SendMessageRequest(bob, room, MessageContent("已离开房间")))
                 }
                 assertFailsWith<NotInRoomException> { chat.pull(bob, room) }
             } finally {

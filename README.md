@@ -19,7 +19,7 @@
 
 ### 业务逻辑集中在 modeling
 
-`modeling.ChatService` 注入 `MembershipRepository`、`ChatRoomRepository` 和 `Atomicity`，负责业务校验、成员检查、入群消息和消息存取。仓库只负责存取，不承载业务规则：只有房间成员能发送和拉取消息，这条规则由 `ChatService` 检查。service 与 repository 在启动时创建并长期复用。业务模块不依赖具体数据库或 sqlx4k；`Atomicity.atomic` 提供用例需要的原子执行能力，构造 service 时注入一次。
+`modeling.ChatService` 注入 `MembershipRepository`、`ChatRoomRepository` 和 `Atomicity`，负责成员检查、入群消息和消息存取。`UserId` 与 `RoomId` 在构造时校验 1–80 字符，`MessageContent` 在构造时校验非空且最多 4000 字符，非法值无法进入业务代码。仓库只负责存取，不承载业务规则：只有房间成员能发送和拉取消息，这条规则由 `ChatService` 检查。service 与 repository 在启动时创建并长期复用。业务模块不依赖具体数据库或 sqlx4k；`Atomicity.atomic` 提供用例需要的原子执行能力，构造 service 时注入一次。
 
 事务边界由用例的原子性要求决定，统一通过 `Atomicity` 声明在 `modeling` 中。后端路由不建立事务，只解析参数、调用业务并返回响应：
 

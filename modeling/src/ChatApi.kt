@@ -1,6 +1,7 @@
 package preferences.modeling
 
 import kotlinx.serialization.Serializable
+import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 
@@ -8,7 +9,7 @@ import preferences.modeling.types.UserId
 data class RoomMembershipRequest(val userId: UserId, val roomId: RoomId)
 
 @Serializable
-data class SendMessageRequest(val sender: UserId, val roomId: RoomId, val content: String)
+data class SendMessageRequest(val sender: UserId, val roomId: RoomId, val content: MessageContent)
 
 @Serializable
 data class ChatApiError(val message: String)
