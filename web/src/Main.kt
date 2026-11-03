@@ -125,7 +125,7 @@ private val App = FC<Props> {
             div {
                 className = ClassName("messages")
                 messages.forEach { message -> div {
-                    className = ClassName("message"); key = Key(message.id.toString())
+                    className = ClassName("message"); key = Key(message.id.value.toString())
                     strong { +message.sender.value }; p { +message.content.value }
                 } }
             }

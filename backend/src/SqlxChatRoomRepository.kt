@@ -5,6 +5,7 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import preferences.modeling.ChatRoomRepository
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
+import preferences.modeling.types.MessageId
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.time.Instant
@@ -31,7 +32,12 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
         ).getOrThrow()
     }
 
-    override suspend fun addMessage(chatMessage: ChatMessage): ChatMessage {
+    override suspend fun addMessage(
+        roomId: RoomId,
+        sender: UserId,
+        content: MessageContent,
+        time: Instant,
+    ): ChatMessage {
         val insertedRows = database.currentExecutor().fetchAll(
             Statement.create(
                 """
@@ -40,15 +46,15 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
                 RETURNING id
                 """.trimIndent(),
             )
-                .bind("roomId", chatMessage.roomId.value)
-                .bind("senderId", chatMessage.sender.value)
-                .bind("content", chatMessage.content.value)
-                .bind("timeSeconds", chatMessage.time.epochSeconds)
-                .bind("timeNanos", chatMessage.time.nanosecondsOfSecond.toLong()),
+                .bind("roomId", roomId.value)
+                .bind("senderId", sender.value)
+                .bind("content", content.value)
+                .bind("timeSeconds", time.epochSeconds)
+                .bind("timeNanos", time.nanosecondsOfSecond.toLong()),
         ).getOrThrow()
 
-        val id = insertedRows.first().get("id").asString().toLong()
-        return chatMessage.copy(id = id)
+        val id = MessageId(insertedRows.first().get("id").asString().toLong())
+        return ChatMessage(id = id, roomId = roomId, sender = sender, content = content, time = time)
     }
 
     override suspend fun messagesIn(roomId: RoomId): List<ChatMessage> {
@@ -63,14 +69,14 @@ class SqlxChatRoomRepository(private val database: QueryExecutor) : ChatRoomRepo
 
         return database.currentExecutor().fetchAll(statement).getOrThrow().map { row ->
             ChatMessage(
+                id = MessageId(row.get("id").asString().toLong()),
+                roomId = RoomId(row.get("room_id").asString()),
                 sender = UserId(row.get("sender_id").asString()),
                 content = MessageContent(row.get("content").asString()),
                 time = Instant.fromEpochSeconds(
                     row.get("time_seconds").asString().toLong(),
                     row.get("time_nanos").asString().toLong(),
                 ),
-                roomId = RoomId(row.get("room_id").asString()),
-                id = row.get("id").asString().toLong(),
             )
         }
     }

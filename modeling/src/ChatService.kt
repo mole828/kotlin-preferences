@@ -15,7 +15,10 @@ class ChatService(
         atomicity.atomic {
             if (memberships.addUserToRoom(userId, roomId)) {
                 rooms.addMessage(
-                    ChatMessage(userId, MessageContent("${userId.value} 加入了群聊"), Clock.System.now(), roomId)
+                    roomId = roomId,
+                    sender = userId,
+                    content = MessageContent("${userId.value} 加入了群聊"),
+                    time = Clock.System.now(),
                 )
             }
         }
@@ -28,7 +31,10 @@ class ChatService(
     override suspend fun send(request: SendMessageRequest): ChatMessage {
         requireMember(request.sender, request.roomId)
         return rooms.addMessage(
-            ChatMessage(request.sender, request.content, Clock.System.now(), request.roomId)
+            roomId = request.roomId,
+            sender = request.sender,
+            content = request.content,
+            time = Clock.System.now(),
         )
     }
 

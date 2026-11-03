@@ -1,9 +1,8 @@
 package preferences.modeling.types
 
+import kotlin.jvm.JvmInline
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class User(
-    val userId: UserId,
-    val nick: String,
-)
+@JvmInline
+value class MessageId(val value: Long)
