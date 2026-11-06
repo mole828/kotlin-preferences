@@ -8,6 +8,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import preferences.modeling.ChatError
+import preferences.modeling.ChatException
 import preferences.modeling.SendMessageRequest
 import preferences.modeling.client.KtorChatClient
 import preferences.modeling.types.ChatMessage
@@ -46,18 +48,39 @@ private val App = FC<Props> {
     var room by useState<RoomId?>(null)
     var messages by useState<List<ChatMessage>>(emptyList())
     var busy by useState(false)
+    var notice by useState<String?>(null)
     val joined = user != null && room != null
 
     useEffectOnce {
         try { awaitCancellation() } finally { scope.cancel(); httpClient.close() }
     }
 
+    fun resetRoom() {
+        user = null; room = null; messages = emptyList(); draft = ""
+    }
+
+    // Another page with the same nickname may leave the room; return to the join form instead of failing.
+    suspend fun asMember(action: suspend () -> Unit) {
+        try {
+            action()
+        } catch (e: ChatException) {
+            when (e.error) {
+                ChatError.NotInRoom -> {
+                    resetRoom()
+                    notice = "你已不在该房间，请重新加入"
+                }
+            }
+        }
+    }
+
     useEffect(joined) {
         val joinedUser = user ?: return@useEffect
         val joinedRoom = room ?: return@useEffect
-        while (isActive) {
-            messages = chatClient.pull(joinedUser, joinedRoom)
-            delay(2500)
+        asMember {
+            while (isActive) {
+                messages = chatClient.pull(joinedUser, joinedRoom)
+                delay(2500)
+            }
         }
     }
 
@@ -75,7 +98,7 @@ private val App = FC<Props> {
         if (joined || newUser.isEmpty() || newRoom.isEmpty()) return
         runExclusive {
             chatClient.join(UserId(newUser), RoomId(newRoom))
-            messages = emptyList(); user = UserId(newUser); room = RoomId(newRoom)
+            messages = emptyList(); user = UserId(newUser); room = RoomId(newRoom); notice = null
         }
     }
 
@@ -84,7 +107,7 @@ private val App = FC<Props> {
         val currentRoom = room ?: return
         runExclusive {
             chatClient.leave(currentUser, currentRoom)
-            user = null; room = null; messages = emptyList(); draft = ""
+            resetRoom()
         }
     }
 
@@ -94,14 +117,17 @@ private val App = FC<Props> {
         val content = draft.trim()
         if (content.isEmpty()) return
         runExclusive {
-            chatClient.send(SendMessageRequest(currentUser, currentRoom, MessageContent(content)))
-            draft = ""
-            messages = chatClient.pull(currentUser, currentRoom)
+            asMember {
+                chatClient.send(SendMessageRequest(currentUser, currentRoom, MessageContent(content)))
+                draft = ""
+                messages = chatClient.pull(currentUser, currentRoom)
+            }
         }
     }
 
     main {
         h1 { +"聊天室" }
+        notice?.let { p { className = ClassName("notice"); +it } }
         div {
             className = ClassName("join-fields")
             label {

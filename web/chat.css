@@ -12,3 +12,4 @@ button:disabled { cursor: default; }
 .message p { margin: .25rem 0; white-space: pre-wrap; }
 .composer { display: flex; flex-wrap: wrap; gap: .5rem; }
 .composer textarea { flex: 1 1 100%; }
+.notice { color: #a33; }

@@ -45,6 +45,6 @@ class ChatService(
 
     // Leaving between this check and the following read/write is equivalent to acting just before leaving.
     private suspend fun requireMember(userId: UserId, roomId: RoomId) {
-        if (!memberships.isMember(userId, roomId)) throw NotInRoomException()
+        if (!memberships.isMember(userId, roomId)) throw ChatException(ChatError.NotInRoom)
     }
 }

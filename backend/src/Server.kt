@@ -21,10 +21,10 @@ import io.ktor.server.routing.routing
 import io.ktor.server.routing.route
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
-import preferences.modeling.ChatApiError
 import preferences.modeling.ChatClient
+import preferences.modeling.ChatError
+import preferences.modeling.ChatException
 import preferences.modeling.ChatService
-import preferences.modeling.NotInRoomException
 import preferences.modeling.RoomMembershipRequest
 import preferences.modeling.SendMessageRequest
 import preferences.modeling.projectProfile
@@ -35,14 +35,14 @@ fun Application.backendModule(chatClient: ChatClient) {
     install(ContentNegotiation) { json() }
     install(StatusPages) {
         exception<Throwable> { call, cause ->
-            val (status, message) = when (cause) {
+            when (cause) {
                 is CancellationException -> throw cause
-                is NotInRoomException -> HttpStatusCode.Forbidden to "请先加入房间"
+                // The declared type ChatError makes the body polymorphic JSON with a "type" field.
+                is ChatException -> call.respond<ChatError>(statusOf(cause.error), cause.error)
                 is BadRequestException, is ContentTransformationException, is IllegalArgumentException ->
-                    HttpStatusCode.BadRequest to "请求参数无效"
-                else -> HttpStatusCode.InternalServerError to "服务器内部错误"
+                    call.respondText("请求参数无效", status = HttpStatusCode.BadRequest)
+                else -> call.respondText("服务器内部错误", status = HttpStatusCode.InternalServerError)
             }
-            call.respond(status, ChatApiError(message))
         }
     }
 
@@ -75,6 +75,11 @@ fun Application.backendModule(chatClient: ChatClient) {
             }
         }
     }
+}
+
+/** Maps failure categories, so a new failure within an existing category needs no change here. */
+private fun statusOf(error: ChatError): HttpStatusCode = when (error) {
+    is ChatError.NotPermitted -> HttpStatusCode.Forbidden
 }
 
 private fun ApplicationCall.requiredQueryParameter(name: String): String =

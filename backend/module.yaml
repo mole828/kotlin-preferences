@@ -17,5 +17,6 @@ dependencies:
   - io.github.smyrgeorge:sqlx4k-postgres:1.12.0
 
 test-dependencies@jvm:
+  - $ktor.server.testHost
   - bom: io.zonky.test.postgres:embedded-postgres-binaries-bom:18.3.0
   - io.zonky.test:embedded-postgres:2.2.2

@@ -6,7 +6,8 @@ import io.github.smyrgeorge.sqlx4k.postgres.PostgreSQL
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatService
-import preferences.modeling.NotInRoomException
+import preferences.modeling.ChatError
+import preferences.modeling.ChatException
 import preferences.modeling.SendMessageRequest
 import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId
@@ -85,10 +86,11 @@ class ChatDatabaseTest {
                 chat.send(SendMessageRequest(bob, room, MessageContent("默认执行器")))
                 assertEquals("默认执行器", chat.pull(bob, room).last().content.value)
                 chat.leave(bob, room)
-                assertFailsWith<NotInRoomException> {
+                val sendError = assertFailsWith<ChatException> {
                     chat.send(SendMessageRequest(bob, room, MessageContent("已离开房间")))
                 }
-                assertFailsWith<NotInRoomException> { chat.pull(bob, room) }
+                assertEquals(ChatError.NotInRoom, sendError.error)
+                assertEquals(ChatError.NotInRoom, assertFailsWith<ChatException> { chat.pull(bob, room) }.error)
             } finally {
                 database.close().getOrThrow()
             }

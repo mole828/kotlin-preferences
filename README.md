@@ -4,6 +4,8 @@
 
 聊天功能作为示例，用来展示业务逻辑、界面、传输和存储各自放在哪里。项目重点是将业务模型、规则与用例集中在 `modeling`，让前后端开发者都能直接理解、审查和测试同一份业务逻辑。
 
+这套结构基于一个前提：整个项目，从业务模型、前后端到部署，由一个人（借助 AI）负责。按康威定律，系统结构往往映射组织的沟通结构：前后端分属不同团队、各自发布时，双方需要一份语言无关的接口文档，并为对方的旧版本保留兼容，契约只能靠沟通和约定维持。当一个人负责全部环节时，这些协调成本不再存在，真正的风险变成“改了一处，忘了另一处”。因此本项目让前后端共同依赖 `modeling` 中的同一份 Kotlin 定义：请求、响应、业务失败都是共享类型，修改业务定义后，编译器会指出前端、后端和传输层所有受影响的位置，不需要靠人记住哪些地方要同步修改。类型安全的全栈 Kotlin 是这一结构的基础，而不是可替换的技术选择。反过来，这里不为非 Kotlin 客户端或前后端独立发版做额外设计；若项目的人员结构变为多团队分别负责，需要重新评估这些取舍。
+
 ## 模块与技术倾向
 
 | 模块 | 技术 | 职责 |
@@ -56,7 +58,15 @@ call.respond(HttpStatusCode.NoContent)
 
 ### 调用契约与平台适配
 
-聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口，后端路由只调用这个接口；`modeling.client.KtorChatClient` 也实现同一接口，集中管理 URL、JSON 和查询参数，HTTP 错误交给 Ktor 默认处理。Web 注入 `HttpClient(Js)` 和浏览器同源地址，调用共享客户端并管理界面状态。HttpClient 的创建与关闭由使用它的平台负责。后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
+聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口，后端路由只调用这个接口；`modeling.client.KtorChatClient` 也实现同一接口，集中管理 URL、JSON 和查询参数。Web 注入 `HttpClient(Js)` 和浏览器同源地址，调用共享客户端并管理界面状态。HttpClient 的创建与关闭由使用它的平台负责。后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
+
+业务失败属于 `ChatClient` 契约的一部分，由可序列化的 sealed 类型 `ChatError` 表示，例如 `ChatError.NotInRoom`。两个实现都抛出携带它的 `ChatException(error)`，调用方不需要知道背后是本地 service 还是 HTTP，用 `when (e.error)` 处理。异常只负责中断流程，HTTP 只传输其中的 `ChatError`：后端按 `statusOf(error)` 选择状态码，以 `ChatError` 为声明类型返回 `{"type":"NotInRoom"}`；`KtorChatClient` 把响应体解码为 `ChatError` 后重新包装成 `ChatException`，不依赖状态码或提示文字。其他 HTTP 失败（参数无效、路由不存在、服务器错误）不属于业务结果，后端返回纯文本，客户端保留 Ktor 的 `ClientRequestException` / `ServerResponseException`。客户端对所有非 2xx 响应都尝试解码 `ChatError`，因此无论 `statusOf` 为某类失败选择 4xx 还是 5xx，都会还原为 `ChatException`。新增业务失败时，在 `ChatError` 中增加一个子类型；编译器会要求 `statusOf` 和各处 `when` 处理它，`KtorChatClient` 无需修改。
+
+业务失败通过异常传递，而不是作为返回值。Kotlin 的设计建议通常是：可预期的失败用针对具体业务的 sealed 返回类型表达，异常留给程序错误。本项目选择异常有两个具体原因：`atomicity.atomic` 依靠异常触发回滚，若失败作为返回值，事务中的业务失败不会自动回滚，每个用例都要自行判断；用异常时，`ChatService` 的业务步骤是一条直线（检查成员、写入消息、返回结果），不必在每一步之后处理“失败则提前返回”。失败的种类仍由 `modeling` 中的 sealed 类型定义，异常只是传递方式。这是基于本项目事务机制的取舍，不是 Kotlin 的通用做法。
+
+`ChatError` 分层表达失败：根接口圈定捕获范围，即 `ChatClient` 契约内的全部业务失败；中间层按失败的性质分类，目前只有 `ChatError.NotPermitted`（无权执行该操作），`NotInRoom` 属于这一类。中间层的名称明确说明发生了什么，让调用方据此判断如何处理，不使用 HTTP 概念；backend 的 `statusOf` 只按类别选择状态码（`NotPermitted` 对应 `403`），同一类别下新增具体失败时无需修改映射。调用方可以按类别处理，也可以像 Web 那样针对具体失败处理。出现其他性质的失败时再增加对应类别，例如“目标不存在”“与当前状态冲突”；若出现只关心某一业务区域（如成员关系）的处理方，再增加按区域划分的父接口，sealed interface 允许一个失败同时属于某个性质类别和某个业务区域。类别根据实际出现的失败划分，不预先设立。
+
+Web 据此处理一种业务情况：同一昵称在另一个页面离开房间后，本页轮询或发送时收到 `ChatError.NotInRoom`，界面回到加入表单并提示重新加入。
 
 Kotlin 源码统一由 Kotlin Toolchain 管理，通过 `project.yaml` 聚合各模块，各模块使用 `module.yaml` 声明产品类型和依赖。前端 React Kotlin 包装器通过 Maven BOM 统一版本；React 的 JS 运行时与 Vite 在 `web/package.json` 中声明。
 
@@ -98,7 +108,7 @@ Vite 开发服务器与预览服务器把 `/api` 代理到 `http://127.0.0.1:808
 | `POST /api/chat/messages` | `{"sender":"alice","roomId":"lobby","content":"你好"}` | `201`，包含数据库 ID 和服务端时间的消息 |
 | `GET /api/chat/messages` | `userId`、`roomId` | 当前房间的消息列表 |
 
-未加入房间的发送/读取返回 `403`，无效参数返回 `400`。前端每 2.5 秒读取房间完整历史，省去增量游标与消息合并逻辑。页面只展示成功流程，异常提示、重试和补偿由具体业务决定；组件卸载时仍关闭 HTTP 客户端并取消协程。消息最多 4000 字符；用户和房间标识最多 80 字符。
+业务失败的响应体为 `ChatError` 的 JSON，`type` 字段区分类型。未加入房间的发送/读取返回 `403` 和 `{"type":"NotInRoom"}`；无效参数返回 `400` 和纯文本说明。前端每 2.5 秒读取房间完整历史，省去增量游标与消息合并逻辑。页面除“已不在房间”外只展示成功流程，其他异常提示、重试和补偿由具体业务决定；组件卸载时仍关闭 HTTP 客户端并取消协程。消息最多 4000 字符；用户和房间标识最多 80 字符。
 
 macOS ARM64 原生运行：
 
@@ -144,7 +154,7 @@ cd web
 npm run build
 ```
 
-`backend/test@jvm/ChatDatabaseTest.kt` 包含一个集成测试，覆盖事务内聊天室读写、重复入群、直接入群失败回滚、入群参与外层事务，以及无事务时使用默认执行器。使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，不依赖 Docker 或 `compose.yaml`。测试复用实际 repository 的建表语句和 service，只额外添加一个让指定入群消息写入失败的约束，用于验证回滚。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
+`backend/test@jvm/ChatApiTest.kt` 用 Ktor `testApplication` 验证业务失败经 HTTP 往返后仍是携带同一 `ChatError` 的 `ChatException`，非业务失败保留 Ktor 异常；它注入一个模拟非成员的 `ChatClient`，只验证传输契约，不涉及数据库。`backend/test@jvm/ChatDatabaseTest.kt` 包含一个集成测试，覆盖事务内聊天室读写、重复入群、直接入群失败回滚、入群参与外层事务，以及无事务时使用默认执行器。使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，不依赖 Docker 或 `compose.yaml`。测试复用实际 repository 的建表语句和 service，只额外添加一个让指定入群消息写入失败的约束，用于验证回滚。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
 
 Kotlin Toolchain 0.13 的 `js/app` 仍使用 Vite 补齐浏览器开发与打包。JS 链接任务仅在 release 变体运行，链接目录由 `web/scripts/build-kotlin.mjs` 指定，升级工具链时需检查该脚本。Linux Native 的编译与运行应在 Linux 环境验证。
 
