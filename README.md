@@ -84,6 +84,7 @@ cd web && npm run build
 - [docs/transactions.md](docs/transactions.md)：业务逻辑、事务边界与 sqlx4k 执行器
 - [docs/error-contract.md](docs/error-contract.md)：调用契约、业务失败的传递与分层
 - [docs/push.md](docs/push.md)：消息推送、房间内序号与 PostgreSQL 广播
+- [docs/sse-feasibility.md](docs/sse-feasibility.md)：Web 端 SSE（Vite 代理、Ktor JS 引擎）可行性实验
 - [docs/client-session.md](docs/client-session.md)：客户端会话状态与界面的分工
 - [docs/testing.md](docs/testing.md)：对照测试的做法与位置
 - [docs/rich-errors-and-krpc.md](docs/rich-errors-and-krpc.md)：Rich Errors 与 kotlinx-rpc 实验记录

@@ -63,7 +63,7 @@ sqlx4k 1.12.0 的 `listen` 有两点需要兜底：
 
 每个 SSE 事件的数据是共享的 sealed 类型 `MessageStreamEvent`（`Message` 或 `Failure`）的 JSON。流开始后响应头已经发出，业务失败无法再用状态码表达，所以作为最后一个事件传递，客户端还原为 `ChatException`，与非流式接口的失败处理一致（见 [error-contract.md](error-contract.md)）。
 
-续传用显式的 `after` 参数，而不是 SSE 的 `Last-Event-ID` 自动重连：续传位置是契约的一部分，内存、PostgreSQL 和 HTTP 三个环境都能用同一个测试验证。重连由 `ChatSession` 负责（见 [client-session.md](client-session.md)）。
+续传用显式的 `after` 参数，而不是 SSE 的 `Last-Event-ID` 自动重连：续传位置是契约的一部分，内存、PostgreSQL 和 HTTP 三个环境都能用同一个测试验证。重连由 `ChatSession` 负责（见 [client-session.md](client-session.md)）。Web 端经 Vite 代理和 Ktor JS 引擎接收 SSE 的可行性见 [sse-feasibility.md](sse-feasibility.md)。
 
 实现中遇到的两个坑，都是由对照测试的 HTTP 环境发现的：
 
