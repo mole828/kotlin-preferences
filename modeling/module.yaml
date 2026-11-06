@@ -3,12 +3,8 @@ product:
   platforms: [jvm, js, linuxX64, linuxArm64, macosArm64]
 
 settings:
-  ktor:
-    enabled: true
-    version: 3.6.0
   kotlin:
     serialization: enabled
 
 dependencies:
   - $kotlin.serialization.json
-  - $ktor.client.core: exported

@@ -1,5 +1,6 @@
 modules:
   - backend
   - backend/runtime/*
+  - client
   - modeling
   - web

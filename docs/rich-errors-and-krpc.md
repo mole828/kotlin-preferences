@@ -4,7 +4,7 @@
 
 ## 背景
 
-当前的错误契约（见 README“调用契约与平台适配”）用可序列化的 sealed `ChatError` 描述业务失败，`ChatException(error)` 负责在服务端和客户端抛出，路由和 `KtorChatClient` 负责 HTTP 转换。实验想回答两个问题：
+当前的错误契约（见 [error-contract.md](error-contract.md)）用可序列化的 sealed `ChatError` 描述业务失败，`ChatException(error)` 负责在服务端和客户端抛出，路由和 `KtorChatClient` 负责 HTTP 转换。实验想回答两个问题：
 
 1. Kotlin 的 Rich Errors（`T | Error` 错误联合类型）能否用来以返回值表达业务失败？
 2. kotlinx-rpc 能否去掉手写的路由和 HTTP 客户端？它把异常传过网络时会发生什么？两者能否组合，让错误作为返回值经 RPC 传输？

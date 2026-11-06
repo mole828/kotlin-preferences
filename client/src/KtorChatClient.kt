@@ -1,4 +1,4 @@
-package preferences.modeling.client
+package preferences.client
 
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.ResponseException

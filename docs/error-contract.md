@@ -2,7 +2,7 @@
 
 ## 共享的调用契约
 
-聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口，后端路由只调用这个接口；`modeling.client.KtorChatClient` 也实现同一接口，集中管理 URL、JSON 和查询参数。Web 注入 `HttpClient(Js)` 和浏览器同源地址，调用共享客户端并管理界面状态。HttpClient 的创建与关闭由使用它的平台负责。后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
+聊天的共用入口是 `modeling.ChatClient`。`ChatService` 实现该接口，后端路由只调用这个接口；`client` 模块中的 `KtorChatClient` 也实现同一接口，集中管理 URL、JSON 和查询参数。Web 注入 `HttpClient(Js)` 和浏览器同源地址，通过 `ChatSession` 调用共享客户端（见 [client-session.md](client-session.md)）。HttpClient 的创建与关闭由使用它的平台负责。后端使用 Ktor 的 `ContentNegotiation { json() }` 处理 JSON，通过 `StatusPages` 统一映射异常；路由直接调用 `receive<T>()` 和 `respond()`。
 
 ## 业务失败属于契约
 
@@ -16,7 +16,7 @@
 
 新增业务失败时，在 `ChatError` 中增加一个子类型；编译器会要求 `statusOf` 和各处 `when` 处理它，`KtorChatClient` 无需修改。
 
-Web 据此处理一种业务情况：同一昵称在另一个页面离开房间后，本页轮询或发送时收到 `ChatError.NotInRoom`，界面回到加入表单并提示重新加入。
+`ChatSession` 据此处理一种业务情况：同一昵称在另一个页面离开房间后，本页轮询或发送时收到 `ChatError.NotInRoom`，会话回到未加入状态并记录原因，界面据此回到加入表单并提示重新加入。
 
 ## 为什么用异常传递
 
@@ -28,7 +28,7 @@ Kotlin 的设计建议通常是：可预期的失败用针对具体业务的 sea
 
 `ChatError` 分层表达失败：根接口圈定捕获范围，即 `ChatClient` 契约内的全部业务失败；中间层按失败的性质分类，目前只有 `ChatError.NotPermitted`（无权执行该操作），`NotInRoom` 属于这一类。
 
-中间层的名称明确说明发生了什么，让调用方据此判断如何处理，不使用 HTTP 概念；backend 的 `statusOf` 只按类别选择状态码（`NotPermitted` 对应 `403`），同一类别下新增具体失败时无需修改映射。调用方可以按类别处理，也可以像 Web 那样针对具体失败处理。
+中间层的名称明确说明发生了什么，让调用方据此判断如何处理，不使用 HTTP 概念；backend 的 `statusOf` 只按类别选择状态码（`NotPermitted` 对应 `403`），同一类别下新增具体失败时无需修改映射。调用方可以按类别处理，也可以像 `ChatSession` 那样针对具体失败处理。
 
 出现其他性质的失败时再增加对应类别，例如“目标不存在”“与当前状态冲突”；若出现只关心某一业务区域（如成员关系）的处理方，再增加按区域划分的父接口，sealed interface 允许一个失败同时属于某个性质类别和某个业务区域。类别根据实际出现的失败划分，不预先设立。
 

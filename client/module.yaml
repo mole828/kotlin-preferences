@@ -1,0 +1,16 @@
+product:
+  type: kmp/lib
+  platforms: [jvm, js]
+
+settings:
+  ktor:
+    enabled: true
+    version: 3.6.0
+  kotlin:
+    serialization: enabled
+
+dependencies:
+  - ../modeling: exported
+  - $kotlin.serialization.json
+  - $ktor.client.core: exported
+  - org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0: exported

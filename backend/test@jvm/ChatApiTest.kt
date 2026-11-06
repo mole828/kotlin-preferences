@@ -3,11 +3,11 @@ package preferences.backend
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import preferences.client.KtorChatClient
 import preferences.modeling.ChatClient
 import preferences.modeling.ChatError
 import preferences.modeling.ChatException
 import preferences.modeling.SendMessageRequest
-import preferences.modeling.client.KtorChatClient
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId

@@ -17,17 +17,19 @@
 | 模块 | 技术 | 职责 |
 | --- | --- | --- |
 | `modeling` | Kotlin Multiplatform，JVM + JS + Linux/macOS Native | 领域模型、业务规则与用例、仓库接口，以及共享 HTTP 契约 |
+| `client` | Kotlin Multiplatform，JVM + JS | 客户端共享代码：HTTP 客户端 `KtorChatClient` 与界面无关的会话状态 `ChatSession` |
 | `backend` | Ktor CIO、Kotlin Multiplatform | 三个服务端平台共享的 HTTP 路由、业务服务装配与 sqlx4k 持久化 |
 | `jvm` / `linux` / `macos` | Kotlin/JVM、Kotlin/Native | 服务启动入口，位于 `backend/runtime/`，仅调用共享的 `runBackend()` |
-| `web` | Kotlin/JS、kotlin-react、Vite | 聊天界面：加入/离开房间、发送消息、轮询历史 |
+| `web` | Kotlin/JS、kotlin-react、Vite | 聊天界面，只负责渲染 `ChatSession` 的状态和收集输入 |
 
-依赖方向为 `web → modeling ← backend ← jvm/linux/macos`，前后端彼此不直接依赖。
+依赖方向为 `web → client → modeling ← backend ← jvm/linux/macos`，前后端彼此不直接依赖。`client` 只被客户端使用，`modeling` 因此不依赖 Ktor 客户端。
 
 ## 设计要点
 
 - **业务集中在 `modeling`**：`ChatService` 负责成员检查、入群消息和消息存取；值类在构造时校验，非法值进不了业务代码；仓库只负责存取。
 - **事务边界由用例决定**：用例通过 `Atomicity.atomic` 声明原子性，路由不建立事务；sqlx4k 的事务上下文只出现在 backend。详见 [docs/transactions.md](docs/transactions.md)。
 - **共享调用契约**：`ChatService` 与 `KtorChatClient` 实现同一个 `ChatClient`。业务失败是可序列化的 sealed `ChatError`，两侧都以 `ChatException(error)` 抛出，HTTP 只传输 `ChatError`。详见 [docs/error-contract.md](docs/error-contract.md)。
+- **界面状态逻辑共享**：加入、轮询、发送、离开、被移出房间和防重复提交由 `client` 中的 `ChatSession` 处理，以 `StateFlow<ChatUiState>` 暴露状态；界面只负责渲染，以后的 Compose UI 可直接复用。详见 [docs/client-session.md](docs/client-session.md)。
 
 ## 构建与运行
 
@@ -80,6 +82,7 @@ cd web && npm run build
 
 - [docs/transactions.md](docs/transactions.md)：业务逻辑、事务边界与 sqlx4k 执行器
 - [docs/error-contract.md](docs/error-contract.md)：调用契约、业务失败的传递与分层
+- [docs/client-session.md](docs/client-session.md)：客户端会话状态与界面的分工
 - [docs/rich-errors-and-krpc.md](docs/rich-errors-and-krpc.md)：Rich Errors 与 kotlinx-rpc 实验记录
 
 ## 官方资料

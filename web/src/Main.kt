@@ -5,14 +5,12 @@ import io.ktor.client.engine.js.Js
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import preferences.client.ChatSession
+import preferences.client.KtorChatClient
+import preferences.client.RoomState
 import preferences.modeling.ChatError
-import preferences.modeling.ChatException
-import preferences.modeling.SendMessageRequest
-import preferences.modeling.client.KtorChatClient
-import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
@@ -37,91 +35,54 @@ import web.dom.ElementId
 import web.dom.document
 import web.cssom.ClassName
 
+/** Renders the latest value of [flow] and re-renders when it changes. */
+private fun <T> useStateFlow(flow: StateFlow<T>): T {
+    var value by useState(flow.value)
+    useEffect(flow) { flow.collect { value = it } }
+    return value
+}
+
+private fun removalNotice(error: ChatError): String = when (error) {
+    ChatError.NotInRoom -> "你已不在该房间，请重新加入"
+}
+
 private val App = FC<Props> {
     val httpClient by useState { HttpClient(Js) }
-    val chatClient by useState { KtorChatClient(httpClient, js("window.location.origin") as String) }
     val scope by useState { MainScope() }
+    val session by useState {
+        ChatSession(KtorChatClient(httpClient, js("window.location.origin") as String), scope)
+    }
+    val ui = useStateFlow(session.state)
     var nickname by useState("")
     var roomName by useState("大厅")
     var draft by useState("")
-    var user by useState<UserId?>(null)
-    var room by useState<RoomId?>(null)
-    var messages by useState<List<ChatMessage>>(emptyList())
-    var busy by useState(false)
-    var notice by useState<String?>(null)
-    val joined = user != null && room != null
+    val joined = ui.room as? RoomState.Joined
+    val busy = ui.busy
+    val notice = (ui.room as? RoomState.NotJoined)?.removedBy?.let(::removalNotice)
 
     useEffectOnce {
         try { awaitCancellation() } finally { scope.cancel(); httpClient.close() }
     }
 
-    fun resetRoom() {
-        user = null; room = null; messages = emptyList(); draft = ""
-    }
-
-    // Another page with the same nickname may leave the room; return to the join form instead of failing.
-    suspend fun asMember(action: suspend () -> Unit) {
-        try {
-            action()
-        } catch (e: ChatException) {
-            when (e.error) {
-                ChatError.NotInRoom -> {
-                    resetRoom()
-                    notice = "你已不在该房间，请重新加入"
-                }
-            }
-        }
-    }
-
-    useEffect(joined) {
-        val joinedUser = user ?: return@useEffect
-        val joinedRoom = room ?: return@useEffect
-        asMember {
-            while (isActive) {
-                messages = chatClient.pull(joinedUser, joinedRoom)
-                delay(2500)
-            }
-        }
-    }
-
-    fun runExclusive(action: suspend () -> Unit) {
-        if (busy) return
-        busy = true
-        scope.launch {
-            try { action() } finally { busy = false }
-        }
-    }
-
     fun join() {
         val newUser = nickname.trim()
         val newRoom = roomName.trim()
-        if (joined || newUser.isEmpty() || newRoom.isEmpty()) return
-        runExclusive {
-            chatClient.join(UserId(newUser), RoomId(newRoom))
-            messages = emptyList(); user = UserId(newUser); room = RoomId(newRoom); notice = null
-        }
+        if (newUser.isEmpty() || newRoom.isEmpty()) return
+        scope.launch { session.join(UserId(newUser), RoomId(newRoom)) }
     }
 
     fun leave() {
-        val currentUser = user ?: return
-        val currentRoom = room ?: return
-        runExclusive {
-            chatClient.leave(currentUser, currentRoom)
-            resetRoom()
+        scope.launch {
+            session.leave()
+            draft = ""
         }
     }
 
     fun send() {
-        val currentUser = user ?: return
-        val currentRoom = room ?: return
         val content = draft.trim()
         if (content.isEmpty()) return
-        runExclusive {
-            asMember {
-                chatClient.send(SendMessageRequest(currentUser, currentRoom, MessageContent(content)))
-                draft = ""
-                messages = chatClient.pull(currentUser, currentRoom)
-            }
+        scope.launch {
+            if (session.send(MessageContent(content))) draft = ""
         }
     }
 
@@ -133,24 +94,24 @@ private val App = FC<Props> {
             label {
                 +"昵称"; input {
                     value = nickname; placeholder = "昵称"; maxLength = 80
-                    disabled = joined || busy; onChange = { nickname = it.target.value }
+                    disabled = joined != null || busy; onChange = { nickname = it.target.value }
                 }
             }
             label {
                 +"房间"; input {
                     value = roomName; placeholder = "房间"; maxLength = 80
-                    disabled = joined || busy; onChange = { roomName = it.target.value }
+                    disabled = joined != null || busy; onChange = { roomName = it.target.value }
                 }
             }
-            if (!joined) button {
+            if (joined == null) button {
                 disabled = busy || nickname.trim().isEmpty() || roomName.trim().isEmpty()
                 onClick = { join() }; +"加入房间"
             }
         }
-        if (joined) {
+        if (joined != null) {
             div {
                 className = ClassName("messages")
-                messages.forEach { message -> div {
+                joined.messages.forEach { message -> div {
                     className = ClassName("message"); key = Key(message.id.value.toString())
                     strong { +message.sender.value }; p { +message.content.value }
                 } }
