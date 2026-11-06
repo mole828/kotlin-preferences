@@ -43,4 +43,4 @@ call.respond(HttpStatusCode.NoContent)
 
 ## 测试
 
-事务边界中“入群消息写入失败时成员关系回滚”这条规则，由对照测试在内存实现和 PostgreSQL 上分别验证，见 [testing.md](testing.md)。
+事务边界中“入群消息写入失败时成员关系回滚”这条规则，由对照测试在内存实现、PostgreSQL 和 HTTP 上分别验证，见 [testing.md](testing.md)。

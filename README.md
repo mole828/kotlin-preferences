@@ -71,7 +71,7 @@ npm run dev
 cd web && npm run build
 ```
 
-`ChatRulesTest` 是一个对照测试：同一份业务规则流程分别在内存实现和嵌入式 PostgreSQL 上运行，用来发现 SQL 实现与逻辑参照之间的差异，详见 [docs/testing.md](docs/testing.md)。Linux Native 的编译与运行应在 Linux 环境验证；macOS Native 需要 Xcode 命令行工具。
+`ChatRulesTest` 是一个对照测试：同一份业务规则流程分别在内存实现、嵌入式 PostgreSQL 和 HTTP 上运行，用来发现 SQL 实现或传输与逻辑参照之间的差异，详见 [docs/testing.md](docs/testing.md)。Linux Native 的编译与运行应在 Linux 环境验证；macOS Native 需要 Xcode 命令行工具。
 
 ## 工具链说明
 

@@ -1,8 +1,10 @@
 package preferences.backend
 
 import io.github.smyrgeorge.sqlx4k.postgres.PostgreSQL
+import io.ktor.server.testing.testApplication
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import kotlinx.coroutines.runBlocking
+import preferences.client.KtorChatClient
 import preferences.modeling.ChatClient
 import preferences.modeling.ChatError
 import preferences.modeling.ChatException
@@ -20,14 +22,24 @@ import kotlin.test.assertFailsWith
 private const val REJECTED_WELCOME = "blocked 加入了群聊"
 
 /**
- * Runs the same chat rules against the in-memory reference and against PostgreSQL.
- * A rule that passes in memory but fails on PostgreSQL points at a difference in the SQL implementation.
+ * Runs the same chat rules against the in-memory reference, against PostgreSQL and across HTTP.
+ * A rule that passes in memory but fails on PostgreSQL points at a difference in the SQL implementation;
+ * one that fails only across HTTP points at the transport, such as a business failure that does not come back
+ * as the same [ChatError].
  */
 class ChatRulesTest {
     @Test
     fun inMemory(): Unit = runBlocking {
         val store = MemoryChatStore(rejectedContent = REJECTED_WELCOME)
         verifyChatRules(ChatService(store.membershipRepository, store.chatRoomRepository, store.atomicity))
+    }
+
+    /** Serves the in-memory reference, so a failure here is about the transport rather than the database. */
+    @Test
+    fun overHttp() = testApplication {
+        val store = MemoryChatStore(rejectedContent = REJECTED_WELCOME)
+        application { backendModule(ChatService(store.membershipRepository, store.chatRoomRepository, store.atomicity)) }
+        verifyChatRules(KtorChatClient(client, "http://localhost"))
     }
 
     @Test
