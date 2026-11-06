@@ -4,8 +4,8 @@
 
 `client` 模块存放只在客户端使用的共享代码：
 
-- `KtorChatClient`：`ChatClient` 的 HTTP 实现，负责 URL、JSON 和业务失败的还原。
-- `ChatSession`：界面无关的聊天流程，负责加入、加入后轮询、发送后刷新、离开、被移出房间，以及操作进行中忽略重复提交。
+- `KtorChatClient`：`ChatClient` 的 HTTP 实现，负责 URL、JSON、SSE 消息流和业务失败的还原。
+- `ChatSession`：界面无关的聊天流程，负责加入、加入后接收消息、发送、离开、被移出房间，以及操作进行中忽略重复提交。
 
 界面只做两件事：渲染 `ChatSession.state`，以及收集输入（昵称、房间名、消息草稿）后调用会话方法。Web 用一个订阅 `StateFlow` 的小 hook 渲染；以后的 Compose UI 用 `collectAsState()` 即可复用同一套流程。
 
@@ -26,9 +26,10 @@ sealed interface RoomState {
 
 ## 行为约定
 
-- 方法都是 `suspend`，由界面在自己的作用域中调用；轮询运行在构造时传入的作用域中，取消该作用域即结束会话。应在界面的主调度器上调用。
+- 方法都是 `suspend`，由界面在自己的作用域中调用；接收消息运行在构造时传入的作用域中，取消该作用域即结束会话。应在界面的主调度器上调用。
 - 操作进行中（`busy`）再次调用任何操作会被直接忽略，由 `Mutex.tryLock` 保证。
-- `send` 返回是否发送成功，界面据此决定是否清空草稿。
-- 轮询或发送收到 `ChatError.NotInRoom` 时，会话回到 `NotJoined(removedBy = NotInRoom)` 并停止轮询。
-- 业务失败以外的异常（网络错误等）照常抛给调用方，与直接调用 `ChatClient` 一致。
-- 离开后才返回的拉取结果会被丢弃，不会让会话回到已加入状态。
+- `send` 返回是否发送成功，界面据此决定是否清空草稿。发出的消息和其他人的消息一样经消息流到达，不单独刷新。
+- 消息流或发送收到 `ChatError.NotInRoom` 时，会话回到 `NotJoined(removedBy = NotInRoom)` 并停止接收。
+- 消息流因网络等原因中断时，等待 `reconnectDelay` 后用最后收到的序号续传，不重复也不遗漏（见 [push.md](push.md)）。
+- 界面操作中业务失败以外的异常（网络错误等）照常抛给调用方，与直接调用 `ChatClient` 一致。
+- 离开后才到达的消息会被丢弃，不会让会话回到已加入状态。

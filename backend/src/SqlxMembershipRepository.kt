@@ -20,7 +20,8 @@ class SqlxMembershipRepository(private val database: QueryExecutor) : Membership
     }
 
     override suspend fun addUserToRoom(userId: UserId, roomId: RoomId): Boolean {
-        return database.currentExecutor().execute(
+        val executor = database.currentExecutor()
+        val added = executor.execute(
             Statement.create(
                 "INSERT INTO room_memberships(room_id, user_id) VALUES (:roomId, :userId) " +
                     "ON CONFLICT(room_id, user_id) DO NOTHING",
@@ -28,16 +29,21 @@ class SqlxMembershipRepository(private val database: QueryExecutor) : Membership
                 .bind("roomId", roomId.value)
                 .bind("userId", userId.value),
         ).getOrThrow() > 0
+        if (added) executor.notifyRoomChanged(roomId)
+        return added
     }
 
+    // Readers of the room re-check their membership when signalled, so a user who left stops receiving messages.
     override suspend fun deleteUserFromRoom(userId: UserId, roomId: RoomId) {
-        database.currentExecutor().execute(
+        val executor = database.currentExecutor()
+        executor.execute(
             Statement.create(
                 "DELETE FROM room_memberships WHERE room_id = :roomId AND user_id = :userId",
             )
                 .bind("roomId", roomId.value)
                 .bind("userId", userId.value),
         ).getOrThrow()
+        executor.notifyRoomChanged(roomId)
     }
 
     override suspend fun isMember(userId: UserId, roomId: RoomId): Boolean {

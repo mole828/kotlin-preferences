@@ -19,6 +19,10 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.routing.route
+import io.ktor.server.sse.SSE
+import io.ktor.server.sse.sse
+import io.ktor.sse.ServerSentEvent
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import preferences.modeling.ChatClient
@@ -27,12 +31,15 @@ import preferences.modeling.ChatException
 import preferences.modeling.ChatService
 import preferences.modeling.RoomMembershipRequest
 import preferences.modeling.SendMessageRequest
+import preferences.modeling.MessageStreamEvent
 import preferences.modeling.projectProfile
+import preferences.modeling.types.MessageSeq
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 
 fun Application.backendModule(chatClient: ChatClient) {
     install(ContentNegotiation) { json() }
+    install(SSE)
     install(StatusPages) {
         exception<Throwable> { call, cause ->
             when (cause) {
@@ -67,15 +74,25 @@ fun Application.backendModule(chatClient: ChatClient) {
                 val message = chatClient.send(request)
                 call.respond(HttpStatusCode.Created, message)
             }
-            get("/messages") {
+            // Invalid parameters close the stream without an event: the response has already started.
+            sse("/messages") {
                 val userId = UserId(call.requiredQueryParameter("userId"))
                 val roomId = RoomId(call.requiredQueryParameter("roomId"))
-                val messages = chatClient.pull(userId, roomId)
-                call.respond(messages)
+                val after = call.request.queryParameters["after"]?.let { MessageSeq(it.toLong()) }
+                try {
+                    chatClient.messages(userId, roomId, after).collect { message ->
+                        send(event(MessageStreamEvent.Message(message)))
+                    }
+                } catch (e: ChatException) {
+                    send(event(MessageStreamEvent.Failure(e.error)))
+                }
             }
         }
     }
 }
+
+/** The declared type MessageStreamEvent makes the data polymorphic JSON with a "type" field. */
+private fun event(event: MessageStreamEvent) = ServerSentEvent(data = Json.encodeToString<MessageStreamEvent>(event))
 
 /** Maps failure categories, so a new failure within an existing category needs no change here. */
 private fun statusOf(error: ChatError): HttpStatusCode = when (error) {
@@ -102,6 +119,7 @@ fun runBackend(
         val chat = ChatService(
             memberships = memberships,
             rooms = messages,
+            signals = PgRoomSignals.listen(database),
             atomicity = SqlxAtomicity(database),
         )
         embeddedServer(CIO, host = host, port = port) {

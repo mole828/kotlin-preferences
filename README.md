@@ -29,7 +29,8 @@
 - **业务集中在 `modeling`**：`ChatService` 负责成员检查、入群消息和消息存取；值类在构造时校验，非法值进不了业务代码；仓库只负责存取。
 - **事务边界由用例决定**：用例通过 `Atomicity.atomic` 声明原子性，路由不建立事务；sqlx4k 的事务上下文只出现在 backend。详见 [docs/transactions.md](docs/transactions.md)。
 - **共享调用契约**：`ChatService` 与 `KtorChatClient` 实现同一个 `ChatClient`。业务失败是可序列化的 sealed `ChatError`，两侧都以 `ChatException(error)` 抛出，HTTP 只传输 `ChatError`。详见 [docs/error-contract.md](docs/error-contract.md)。
-- **界面状态逻辑共享**：加入、轮询、发送、离开、被移出房间和防重复提交由 `client` 中的 `ChatSession` 处理，以 `StateFlow<ChatUiState>` 暴露状态；界面只负责渲染，以后的 Compose UI 可直接复用。详见 [docs/client-session.md](docs/client-session.md)。
+- **消息推送**：`ChatClient.messages` 返回 `Flow`，服务端经 SSE 推送；消息带房间内按提交顺序可见的序号，PostgreSQL 的 `NOTIFY` 随事务提交，每个实例一个 `LISTEN` 连接在进程内分发。详见 [docs/push.md](docs/push.md)。
+- **界面状态逻辑共享**：加入、接收消息、发送、离开、被移出房间和防重复提交由 `client` 中的 `ChatSession` 处理，以 `StateFlow<ChatUiState>` 暴露状态；界面只负责渲染，以后的 Compose UI 可直接复用。详见 [docs/client-session.md](docs/client-session.md)。
 
 ## 构建与运行
 
@@ -46,11 +47,11 @@ npm install
 npm run dev
 ```
 
-后端默认监听 `127.0.0.1:8080`，`GET /health` 返回 `OK`。`compose.yaml` 提供本地 PostgreSQL 18，数据保存在 Docker volume 中，`docker compose down -v` 连同数据一起删除；`runBackend` 的数据库默认值与它一致。Vite 把 `/api` 代理到后端，生产部署同样需要将 `/api` 转发到后端，保持同源。
+后端默认监听 `127.0.0.1:8080`，`GET /health` 返回 `OK`。消息表结构随推送改为房间内序号，旧的本地数据库需先执行 `docker compose down -v`。`compose.yaml` 提供本地 PostgreSQL 18，数据保存在 Docker volume 中，`docker compose down -v` 连同数据一起删除；`runBackend` 的数据库默认值与它一致。Vite 把 `/api` 代理到后端，生产部署同样需要将 `/api` 转发到后端，保持同源。
 
 修改 Kotlin 源码后运行 `npm run build:kotlin` 或重启 `npm run dev`，当前没有自动监视编译。`npm run build` 生成 `web/dist/`。
 
-页面填写昵称和房间名后加入；同房间的多个窗口每 2.5 秒拉取完整历史。昵称直接作为用户标识，没有账号登录，成员检查不等于身份认证。
+页面填写昵称和房间名后加入；同房间的多个窗口实时收到新消息。昵称直接作为用户标识，没有账号登录，成员检查不等于身份认证。
 
 ## 聊天 API
 
@@ -58,10 +59,10 @@ npm run dev
 | --- | --- | --- |
 | `POST /api/chat/join` | `{"userId":"alice","roomId":"lobby"}` | `204`，重复加入无副作用 |
 | `POST /api/chat/leave` | 同上 | `204`，消息仍保留 |
-| `POST /api/chat/messages` | `{"sender":"alice","roomId":"lobby","content":"你好"}` | `201`，包含数据库 ID 和服务端时间的消息 |
-| `GET /api/chat/messages` | `userId`、`roomId` | 当前房间的消息列表 |
+| `POST /api/chat/messages` | `{"sender":"alice","roomId":"lobby","content":"你好"}` | `201`，包含房间内序号和服务端时间的消息 |
+| `GET /api/chat/messages` | `userId`、`roomId`，可选 `after` | SSE 流：`after` 之后的消息，然后是新消息 |
 
-未加入房间时返回 `403` 和 `{"type":"NotInRoom"}`；无效参数返回 `400` 和纯文本说明。消息最多 4000 字符，用户和房间标识最多 80 字符。
+未加入房间时返回 `403` 和 `{"type":"NotInRoom"}`，消息流则以一个 `Failure` 事件结束；无效参数返回 `400` 和纯文本说明。消息最多 4000 字符，用户和房间标识最多 80 字符。
 
 ## 验证
 
@@ -82,6 +83,7 @@ cd web && npm run build
 
 - [docs/transactions.md](docs/transactions.md)：业务逻辑、事务边界与 sqlx4k 执行器
 - [docs/error-contract.md](docs/error-contract.md)：调用契约、业务失败的传递与分层
+- [docs/push.md](docs/push.md)：消息推送、房间内序号与 PostgreSQL 广播
 - [docs/client-session.md](docs/client-session.md)：客户端会话状态与界面的分工
 - [docs/testing.md](docs/testing.md)：对照测试的做法与位置
 - [docs/rich-errors-and-krpc.md](docs/rich-errors-and-krpc.md)：Rich Errors 与 kotlinx-rpc 实验记录

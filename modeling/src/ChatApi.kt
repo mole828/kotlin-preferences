@@ -2,6 +2,7 @@ package preferences.modeling
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
@@ -11,6 +12,21 @@ data class RoomMembershipRequest(val userId: UserId, val roomId: RoomId)
 
 @Serializable
 data class SendMessageRequest(val sender: UserId, val roomId: RoomId, val content: MessageContent)
+
+/**
+ * One event of [ChatClient.messages] over HTTP. The stream's response has started before a failure happens,
+ * so a failure travels as the last event instead of as a status code.
+ */
+@Serializable
+sealed interface MessageStreamEvent {
+    @Serializable
+    @SerialName("Message")
+    data class Message(val message: ChatMessage) : MessageStreamEvent
+
+    @Serializable
+    @SerialName("Failure")
+    data class Failure(val error: ChatError) : MessageStreamEvent
+}
 
 /**
  * Business failures of the [ChatClient] contract. The HTTP response body carries them as JSON.

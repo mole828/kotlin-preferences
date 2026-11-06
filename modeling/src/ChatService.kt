@@ -1,7 +1,10 @@
 package preferences.modeling
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
+import preferences.modeling.types.MessageSeq
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.time.Clock
@@ -9,6 +12,7 @@ import kotlin.time.Clock
 class ChatService(
     private val memberships: MembershipRepository,
     private val rooms: ChatRoomRepository,
+    private val signals: RoomSignals,
     private val atomicity: Atomicity,
 ) : ChatClient {
     override suspend fun join(userId: UserId, roomId: RoomId) {
@@ -38,9 +42,17 @@ class ChatService(
         )
     }
 
-    override suspend fun pull(userId: UserId, roomId: RoomId): List<ChatMessage> {
-        requireMember(userId, roomId)
-        return rooms.messagesIn(roomId)
+    // Each signal is answered the same way: check the membership, then read what came after the last message sent.
+    // The first signal arrives on collection, so the reader subscribes before reading and cannot miss a change.
+    override fun messages(userId: UserId, roomId: RoomId, after: MessageSeq?): Flow<ChatMessage> = flow {
+        var last = after
+        signals.changes(roomId).collect {
+            requireMember(userId, roomId)
+            for (message in rooms.messagesAfter(roomId, last)) {
+                emit(message)
+                last = message.seq
+            }
+        }
     }
 
     // Leaving between this check and the following read/write is equivalent to acting just before leaving.

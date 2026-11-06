@@ -112,7 +112,7 @@ private val App = FC<Props> {
             div {
                 className = ClassName("messages")
                 joined.messages.forEach { message -> div {
-                    className = ClassName("message"); key = Key(message.id.value.toString())
+                    className = ClassName("message"); key = Key(message.seq.value.toString())
                     strong { +message.sender.value }; p { +message.content.value }
                 } }
             }

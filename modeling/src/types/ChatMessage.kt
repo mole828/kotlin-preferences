@@ -3,11 +3,11 @@ package preferences.modeling.types
 import kotlin.time.Instant
 import kotlinx.serialization.Serializable
 
-/** A message already saved by the repository, so it always carries its database ID. */
+/** A message already saved by the repository; [roomId] and [seq] identify it. */
 @Serializable
 data class ChatMessage(
-    val id: MessageId,
     val roomId: RoomId,
+    val seq: MessageSeq,
     val sender: UserId,
     val content: MessageContent,
     val time: Instant,

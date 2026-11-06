@@ -12,11 +12,12 @@
 
 - 后端按 `statusOf(error)` 选择状态码，以 `ChatError` 为声明类型返回 `{"type":"NotInRoom"}`。响应按传入值的静态类型序列化：静态类型是 `ChatError.NotInRoom` 这样的具体类型时，响应体缺少 `type` 字段，客户端无法还原。因此显式写 `respond<ChatError>`，不依赖类型推断；这个坑由对照测试的 HTTP 环境守住。
 - `KtorChatClient` 对所有非 2xx 响应尝试把响应体解码为 `ChatError`，成功则重新包装成 `ChatException`，不依赖状态码或提示文字；因此无论 `statusOf` 为某类失败选择 4xx 还是 5xx，都会还原为 `ChatException`。
+- 消息流的响应在失败前已经开始，业务失败作为最后一个 SSE 事件 `MessageStreamEvent.Failure` 传输，客户端同样还原为 `ChatException`（见 [push.md](push.md)）。
 - 其他 HTTP 失败（参数无效、路由不存在、服务器错误）不属于业务结果，后端返回纯文本，客户端保留 Ktor 的 `ClientRequestException` / `ServerResponseException`。
 
 新增业务失败时，在 `ChatError` 中增加一个子类型；编译器会要求 `statusOf` 和各处 `when` 处理它，`KtorChatClient` 无需修改。
 
-`ChatSession` 据此处理一种业务情况：同一昵称在另一个页面离开房间后，本页轮询或发送时收到 `ChatError.NotInRoom`，会话回到未加入状态并记录原因，界面据此回到加入表单并提示重新加入。
+`ChatSession` 据此处理一种业务情况：同一昵称在另一个页面离开房间后，本页的消息流或发送收到 `ChatError.NotInRoom`，会话回到未加入状态并记录原因，界面据此回到加入表单并提示重新加入。
 
 ## 为什么用异常传递
 
