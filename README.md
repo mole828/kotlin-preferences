@@ -71,7 +71,7 @@ npm run dev
 cd web && npm run build
 ```
 
-`ChatDatabaseTest` 在嵌入式 PostgreSQL 上验证业务规则与事务，`ChatApiTest` 验证业务失败经 HTTP 往返后类型不变。Linux Native 的编译与运行应在 Linux 环境验证；macOS Native 需要 Xcode 命令行工具。
+`ChatRulesTest` 是一个对照测试：同一份业务规则流程分别在内存实现和嵌入式 PostgreSQL 上运行，用来发现 SQL 实现与逻辑参照之间的差异，详见 [docs/testing.md](docs/testing.md)。Linux Native 的编译与运行应在 Linux 环境验证；macOS Native 需要 Xcode 命令行工具。
 
 ## 工具链说明
 
@@ -83,6 +83,7 @@ cd web && npm run build
 - [docs/transactions.md](docs/transactions.md)：业务逻辑、事务边界与 sqlx4k 执行器
 - [docs/error-contract.md](docs/error-contract.md)：调用契约、业务失败的传递与分层
 - [docs/client-session.md](docs/client-session.md)：客户端会话状态与界面的分工
+- [docs/testing.md](docs/testing.md)：对照测试的做法与位置
 - [docs/rich-errors-and-krpc.md](docs/rich-errors-and-krpc.md)：Rich Errors 与 kotlinx-rpc 实验记录
 
 ## 官方资料

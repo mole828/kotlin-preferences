@@ -43,4 +43,4 @@ call.respond(HttpStatusCode.NoContent)
 
 ## 测试
 
-`backend/test@jvm/ChatDatabaseTest.kt` 覆盖事务内聊天室读写、重复入群、直接入群失败回滚、入群参与外层事务，以及无事务时使用默认执行器。测试使用 `embedded-postgres:2.2.2` 和二进制 BOM `18.3.0`，由测试启动、关闭临时 PostgreSQL，不依赖 Docker 或 `compose.yaml`。测试复用实际 repository 的建表语句和 service，只额外添加一个让指定入群消息写入失败的约束，用于验证回滚。版本配置参见 [embedded-postgres 官方说明](https://github.com/zonkyio/embedded-postgres#postgres-version)。
+事务边界中“入群消息写入失败时成员关系回滚”这条规则，由对照测试在内存实现和 PostgreSQL 上分别验证，见 [testing.md](testing.md)。

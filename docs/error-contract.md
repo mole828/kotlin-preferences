@@ -31,7 +31,3 @@ Kotlin 的设计建议通常是：可预期的失败用针对具体业务的 sea
 中间层的名称明确说明发生了什么，让调用方据此判断如何处理，不使用 HTTP 概念；backend 的 `statusOf` 只按类别选择状态码（`NotPermitted` 对应 `403`），同一类别下新增具体失败时无需修改映射。调用方可以按类别处理，也可以像 `ChatSession` 那样针对具体失败处理。
 
 出现其他性质的失败时再增加对应类别，例如“目标不存在”“与当前状态冲突”；若出现只关心某一业务区域（如成员关系）的处理方，再增加按区域划分的父接口，sealed interface 允许一个失败同时属于某个性质类别和某个业务区域。类别根据实际出现的失败划分，不预先设立。
-
-## 测试
-
-`backend/test@jvm/ChatApiTest.kt` 用 Ktor `testApplication` 验证业务失败经 HTTP 往返后仍是携带同一 `ChatError` 的 `ChatException`，非业务失败保留 Ktor 异常。它注入一个模拟非成员的 `ChatClient`，只验证传输契约，不涉及数据库。
