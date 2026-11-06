@@ -13,12 +13,10 @@ import kotlinx.coroutines.sync.Mutex
 import preferences.modeling.ChatClient
 import preferences.modeling.ChatError
 import preferences.modeling.ChatException
-import preferences.modeling.SendMessageRequest
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
 import preferences.modeling.types.MessageSeq
 import preferences.modeling.types.RoomId
-import preferences.modeling.types.UserId
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -29,21 +27,24 @@ data class ChatUiState(
 )
 
 sealed interface RoomState {
-    /** [removedBy] is the business failure that took the user out of the room, or null after joining nothing or leaving. */
+    /**
+     * [removedBy] is the business failure that took the user out of the room, or null after joining nothing or leaving.
+     * [ChatError.SessionExpired] means the sign-in itself ended, so the UI should ask the user to sign in again.
+     */
     data class NotJoined(val removedBy: ChatError? = null) : RoomState
 
-    data class Joined(val user: UserId, val room: RoomId, val messages: List<ChatMessage>) : RoomState
+    data class Joined(val room: RoomId, val messages: List<ChatMessage>) : RoomState
 }
 
 /**
- * Client-side chat flow shared by every UI: joining, receiving the room's messages, sending and leaving.
- * UIs render [state] and decide how to present it. Receiving runs in [scope]; cancel it to stop the session.
- * Failures of the UI's own actions other than business failures propagate to the caller, as when calling
+ * Client-side chat flow of a signed-in user, shared by every UI: joining, receiving the room's messages, sending
+ * and leaving. UIs render [state] and decide how to present it. Receiving runs in [scope]; cancel it to stop the
+ * session. Failures of the UI's own actions other than business failures propagate to the caller, as when calling
  * [ChatClient] directly; a broken message stream is reconnected after [reconnectDelay].
  * Call it from the UI's main dispatcher.
  */
 class ChatSession(
-    private val client: ChatClient,
+    val client: ChatClient,
     private val scope: CoroutineScope,
     private val reconnectDelay: Duration = 2.seconds,
 ) {
@@ -53,21 +54,25 @@ class ChatSession(
     private val actionLock = Mutex()
     private var receiving: Job? = null
 
-    suspend fun join(user: UserId, room: RoomId) {
+    suspend fun join(room: RoomId) {
         if (state.value.room is RoomState.Joined) return
         exclusive {
-            client.join(user, room)
-            val joined = RoomState.Joined(user, room, messages = emptyList())
-            mutableState.update { it.copy(room = joined) }
-            startReceiving(joined)
+            handlingRemoval {
+                client.join(room)
+                val joined = RoomState.Joined(room, messages = emptyList())
+                mutableState.update { it.copy(room = joined) }
+                startReceiving(joined)
+            }
         }
     }
 
     suspend fun leave() {
         val joined = state.value.room as? RoomState.Joined ?: return
         exclusive {
-            client.leave(joined.user, joined.room)
-            exitRoom(removedBy = null)
+            handlingRemoval {
+                client.leave(joined.room)
+                exitRoom(removedBy = null)
+            }
         }
     }
 
@@ -76,8 +81,8 @@ class ChatSession(
         val joined = state.value.room as? RoomState.Joined ?: return false
         var sent = false
         exclusive {
-            asMember {
-                client.send(SendMessageRequest(joined.user, joined.room, content))
+            handlingRemoval {
+                client.send(joined.room, content)
                 sent = true
             }
         }
@@ -87,10 +92,10 @@ class ChatSession(
     private fun startReceiving(joined: RoomState.Joined) {
         receiving?.cancel()
         receiving = scope.launch {
-            asMember {
+            handlingRemoval {
                 while (true) {
                     try {
-                        client.messages(joined.user, joined.room, after = lastSeq(joined)).collect { append(joined, it) }
+                        client.messages(joined.room, after = lastSeq(joined)).collect { append(joined, it) }
                     } catch (e: Exception) {
                         if (e is ChatException || e is CancellationException) throw e
                     }
@@ -102,13 +107,13 @@ class ChatSession(
     }
 
     private fun lastSeq(joined: RoomState.Joined): MessageSeq? =
-        (state.value.room as? RoomState.Joined)?.takeIf { it.isSameRoom(joined) }?.messages?.lastOrNull()?.seq
+        (state.value.room as? RoomState.Joined)?.takeIf { it.room == joined.room }?.messages?.lastOrNull()?.seq
 
     private fun append(joined: RoomState.Joined, message: ChatMessage) {
         mutableState.update { current ->
             val room = current.room
             // Ignore a late message for a room the session has already left.
-            if (room is RoomState.Joined && room.isSameRoom(joined)) {
+            if (room is RoomState.Joined && room.room == joined.room) {
                 current.copy(room = room.copy(messages = room.messages + message))
             } else {
                 current
@@ -116,15 +121,15 @@ class ChatSession(
         }
     }
 
-    private fun RoomState.Joined.isSameRoom(other: RoomState.Joined) = user == other.user && room == other.room
-
-    // Another page with the same nickname may leave the room; return to the not-joined state instead of failing.
-    private suspend fun asMember(action: suspend () -> Unit) {
+    // Another page of the same user may leave the room, and a sign-in expires: both return to the not-joined state
+    // with the reason instead of failing. Sign-in failures cannot come from these actions.
+    private suspend fun handlingRemoval(action: suspend () -> Unit) {
         try {
             action()
         } catch (e: ChatException) {
             when (e.error) {
-                ChatError.NotInRoom -> exitRoom(removedBy = e.error)
+                ChatError.NotInRoom, ChatError.SessionExpired -> exitRoom(removedBy = e.error)
+                ChatError.UsernameTaken, ChatError.InvalidCredentials -> throw e
             }
         }
     }

@@ -3,6 +3,8 @@ product:
   platforms: [jvm, linuxX64, linuxArm64, macosArm64]
 
 settings:
+  kotlin:
+    serialization: enabled
   ktor:
     enabled: true
     version: 3.6.0
@@ -16,6 +18,8 @@ dependencies:
   - $ktor.server.statusPages
   - $ktor.server.sse
   - io.github.smyrgeorge:sqlx4k-postgres:1.12.0
+  - org.kotlincrypto.macs:hmac-sha2:0.8.0
+  - org.kotlincrypto.random:crypto-rand:0.6.0
 
 test-dependencies@jvm:
   - ../client

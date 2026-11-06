@@ -5,10 +5,10 @@
 ## 契约
 
 ```kotlin
-fun messages(userId: UserId, roomId: RoomId, after: MessageSeq? = null): Flow<ChatMessage>
+fun messages(roomId: RoomId, after: MessageSeq? = null): Flow<ChatMessage>
 ```
 
-`ChatClient.messages` 先发出 `after` 之后的历史消息，再持续发出新提交的消息，每条恰好一次、按序号排列。流不会自行结束；用户不在房间（包括收集期间离开）时以 `ChatException(ChatError.NotInRoom)` 失败。`ChatService` 和 `KtorChatClient` 实现同一个 `Flow` 契约，界面和测试不区分本地还是远程。
+已登录用户的 `ChatClient.messages` 先发出 `after` 之后的历史消息，再持续发出新提交的消息，每条恰好一次、按序号排列。流不会自行结束；用户不在房间（包括收集期间离开）时以 `ChatException(ChatError.NotInRoom)` 失败。本地实现和 HTTP 实现提供同一个 `Flow` 契约，界面和测试不区分本地还是远程。
 
 ## 房间内序号
 
@@ -68,4 +68,4 @@ sqlx4k 1.12.0 的 `listen` 有两点需要兜底：
 实现中遇到的两个坑，都是由对照测试的 HTTP 环境发现的：
 
 - Ktor 的测试引擎会缓冲完整响应体，永不结束的流到达不了客户端；测试改为在随机端口启动真实的 CIO 服务器。
-- 在 Ktor 客户端的 `sse { }` 块中抛出的异常会被包装为 `SSEClientException`；`KtorChatClient` 在块内只记录失败，离开块后再抛出 `ChatException`。
+- 在 Ktor 客户端的 `sse { }` 块中抛出的异常会被包装为 `SSEClientException`；HTTP 客户端在块内只记录失败，离开块后再抛出 `ChatException`。

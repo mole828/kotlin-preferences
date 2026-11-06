@@ -4,14 +4,24 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
+import preferences.modeling.types.Password
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 
-@Serializable
-data class RoomMembershipRequest(val userId: UserId, val roomId: RoomId)
+// Requests carry no acting user: the server takes it from the bearer token.
 
 @Serializable
-data class SendMessageRequest(val sender: UserId, val roomId: RoomId, val content: MessageContent)
+data class Credentials(val username: UserId, val password: Password)
+
+/** The response to registering or signing in; [token] authorizes the chat requests of [user]. */
+@Serializable
+data class SignedIn(val user: UserId, val token: String)
+
+@Serializable
+data class RoomRequest(val roomId: RoomId)
+
+@Serializable
+data class SendMessageRequest(val roomId: RoomId, val content: MessageContent)
 
 /**
  * One event of [ChatClient.messages] over HTTP. The stream's response has started before a failure happens,
@@ -41,10 +51,36 @@ sealed interface ChatError {
     /** The user may not perform this operation in the current situation. */
     sealed interface NotPermitted : ChatError
 
+    /** The operation conflicts with existing data. */
+    sealed interface Conflict : ChatError
+
+    /** Who is calling could not be established; signing in again may help. */
+    sealed interface NotAuthenticated : ChatError
+
     @Serializable
     @SerialName("NotInRoom")
     data object NotInRoom : NotPermitted {
         override val message get() = "请先加入房间"
+    }
+
+    @Serializable
+    @SerialName("UsernameTaken")
+    data object UsernameTaken : Conflict {
+        override val message get() = "用户名已被注册"
+    }
+
+    /** Covers both an unknown user and a wrong password, so callers cannot probe which usernames exist. */
+    @Serializable
+    @SerialName("InvalidCredentials")
+    data object InvalidCredentials : NotAuthenticated {
+        override val message get() = "用户名或密码错误"
+    }
+
+    /** The sign-in is missing, invalid or expired. Only remote implementations report it. */
+    @Serializable
+    @SerialName("SessionExpired")
+    data object SessionExpired : NotAuthenticated {
+        override val message get() = "登录已失效，请重新登录"
     }
 }
 

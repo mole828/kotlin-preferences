@@ -2,7 +2,7 @@
 
 ## 业务逻辑集中在 modeling
 
-`modeling.ChatService` 注入 `MembershipRepository`、`ChatRoomRepository`、`RoomSignals` 和 `Atomicity`，负责成员检查、入群消息、消息存取和消息流。`UserId` 与 `RoomId` 在构造时校验 1–80 字符，`MessageContent` 在构造时校验非空且最多 4000 字符，非法值无法进入业务代码。仓库只负责存取，不承载业务规则：只有房间成员能发送和读取消息，这条规则由 `ChatService` 检查。service 与 repository 在启动时创建并长期复用。业务模块不依赖具体数据库或 sqlx4k；`Atomicity.atomic` 提供用例需要的原子执行能力，构造 service 时注入一次。
+`modeling.ChatService` 注入 `MembershipRepository`、`ChatRoomRepository`、`RoomSignals` 和 `Atomicity`，负责成员检查、入群消息、消息存取和消息流；操作的用户作为显式参数传入。`AccountService` 负责注册与登录规则。`UserId` 与 `RoomId` 在构造时校验 1–80 字符，`MessageContent` 在构造时校验非空且最多 4000 字符，非法值无法进入业务代码。仓库只负责存取，不承载业务规则：只有房间成员能发送和读取消息，这条规则由 `ChatService` 检查。service 与 repository 在启动时创建并长期复用。业务模块不依赖具体数据库或 sqlx4k；`Atomicity.atomic` 提供用例需要的原子执行能力，构造 service 时注入一次。
 
 前端开发者可以直接阅读这些规则和流程，检查界面行为是否符合业务要求，并参与业务变更的审查。业务代码依赖仓库接口，测试时注入实际 repository，在嵌入式数据库上验证业务规则；仓库接口也为原型演示提供替换空间。
 
@@ -13,8 +13,7 @@
 事务边界由用例的原子性要求决定，统一通过 `Atomicity` 声明在 `modeling` 中。后端路由不建立事务，只解析参数、调用业务并返回响应：
 
 ```kotlin
-val request = call.receive<RoomMembershipRequest>()
-chatClient.join(request.userId, request.roomId)
+chat.join(call.signedInUser, call.receive<RoomRequest>().roomId)
 call.respond(HttpStatusCode.NoContent)
 ```
 
@@ -25,8 +24,8 @@ call.respond(HttpStatusCode.NoContent)
 ```kotlin
 val request = call.receive<SwitchRoomRequest>()
 atomicity.atomic {
-    chatClient.leave(request.userId, request.fromRoomId)
-    chatClient.join(request.userId, request.toRoomId)
+    chat.leave(call.signedInUser, request.fromRoomId)
+    chat.join(call.signedInUser, request.toRoomId)
 }
 call.respond(HttpStatusCode.NoContent)
 ```

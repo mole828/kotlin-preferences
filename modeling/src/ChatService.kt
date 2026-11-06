@@ -9,13 +9,24 @@ import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.time.Clock
 
+/** The chat rules. The acting user is an explicit parameter; [actingAs] fixes it for a signed-in caller. */
 class ChatService(
     private val memberships: MembershipRepository,
     private val rooms: ChatRoomRepository,
     private val signals: RoomSignals,
     private val atomicity: Atomicity,
-) : ChatClient {
-    override suspend fun join(userId: UserId, roomId: RoomId) {
+) {
+    /** Uses this service as [user], once the caller has established who the user is. */
+    fun actingAs(user: UserId): ChatClient = ActingAs(user)
+
+    private inner class ActingAs(override val user: UserId) : ChatClient {
+        override suspend fun join(roomId: RoomId) = join(user, roomId)
+        override suspend fun leave(roomId: RoomId) = leave(user, roomId)
+        override suspend fun send(roomId: RoomId, content: MessageContent) = send(user, roomId, content)
+        override fun messages(roomId: RoomId, after: MessageSeq?) = messages(user, roomId, after)
+    }
+
+    suspend fun join(userId: UserId, roomId: RoomId) {
         atomicity.atomic {
             if (memberships.addUserToRoom(userId, roomId)) {
                 rooms.addMessage(
@@ -28,23 +39,23 @@ class ChatService(
         }
     }
 
-    override suspend fun leave(userId: UserId, roomId: RoomId) {
+    suspend fun leave(userId: UserId, roomId: RoomId) {
         memberships.deleteUserFromRoom(userId, roomId)
     }
 
-    override suspend fun send(request: SendMessageRequest): ChatMessage {
-        requireMember(request.sender, request.roomId)
+    suspend fun send(sender: UserId, roomId: RoomId, content: MessageContent): ChatMessage {
+        requireMember(sender, roomId)
         return rooms.addMessage(
-            roomId = request.roomId,
-            sender = request.sender,
-            content = request.content,
+            roomId = roomId,
+            sender = sender,
+            content = content,
             time = Clock.System.now(),
         )
     }
 
     // Each signal is answered the same way: check the membership, then read what came after the last message sent.
     // The first signal arrives on collection, so the reader subscribes before reading and cannot miss a change.
-    override fun messages(userId: UserId, roomId: RoomId, after: MessageSeq?): Flow<ChatMessage> = flow {
+    fun messages(userId: UserId, roomId: RoomId, after: MessageSeq?): Flow<ChatMessage> = flow {
         var last = after
         signals.changes(roomId).collect {
             requireMember(userId, roomId)

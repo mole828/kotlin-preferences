@@ -16,15 +16,17 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import preferences.client.KtorChatClient
-import preferences.modeling.ChatClient
+import preferences.client.KtorChatGateway
+import preferences.modeling.AccountService
+import preferences.modeling.ChatGateway
+import preferences.modeling.LocalChatGateway
 import preferences.modeling.ChatError
 import preferences.modeling.ChatException
 import preferences.modeling.ChatService
-import preferences.modeling.SendMessageRequest
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
 import preferences.modeling.types.MessageSeq
+import preferences.modeling.types.Password
 import preferences.modeling.types.RoomId
 import preferences.modeling.types.UserId
 import kotlin.test.Test
@@ -37,7 +39,7 @@ import kotlin.time.Duration.Companion.seconds
 private const val REJECTED_WELCOME = "blocked 加入了群聊"
 
 /**
- * Runs the same chat rules against the in-memory reference, against PostgreSQL and across HTTP.
+ * Runs the same account and chat rules against the in-memory reference, against PostgreSQL and across HTTP.
  * A rule that passes in memory but fails on PostgreSQL points at a difference in the SQL implementation;
  * one that fails only across HTTP points at the transport, such as a business failure that does not come back
  * as the same [ChatError].
@@ -45,8 +47,7 @@ private const val REJECTED_WELCOME = "blocked 加入了群聊"
 class ChatRulesTest {
     @Test
     fun inMemory(): Unit = runBlocking {
-        val store = MemoryChatStore(rejectedContent = REJECTED_WELCOME)
-        verifyChatRules(store.chatService())
+        verifyChatRules(MemoryChatStore(rejectedContent = REJECTED_WELCOME).gateway())
     }
 
     /**
@@ -56,11 +57,14 @@ class ChatRulesTest {
     @Test
     fun overHttp(): Unit = runBlocking {
         val store = MemoryChatStore(rejectedContent = REJECTED_WELCOME)
-        val server = embeddedServer(ServerCIO, port = 0) { backendModule(store.chatService()) }.startSuspend()
+        val tokens = JwtTokens(ByteArray(32) { it.toByte() })
+        val server = embeddedServer(ServerCIO, port = 0) {
+            backendModule(store.chatService(), store.accountService(), tokens)
+        }.startSuspend()
         val port = server.engine.resolvedConnectors().first().port
         val httpClient = HttpClient(ClientCIO)
         try {
-            verifyChatRules(KtorChatClient(httpClient, "http://127.0.0.1:$port"))
+            verifyChatRules(KtorChatGateway(httpClient, "http://127.0.0.1:$port"))
         } finally {
             httpClient.close()
             server.stopSuspend()
@@ -82,11 +86,11 @@ class ChatRulesTest {
                 )
             }
             try {
-                val (writer, reader) = databases.map { chatServiceOn(it) }
+                val (writer, reader) = databases.map { gatewayOn(it) }
                 databases.first().execute(
                     "ALTER TABLE chat_messages ADD CONSTRAINT rejected_welcome CHECK (content <> '$REJECTED_WELCOME')",
                 ).getOrThrow()
-                verifyChatRules(chat = writer, reader = reader)
+                verifyChatRules(gateway = writer, readerGateway = reader)
             } finally {
                 databases.forEach { it.close().getOrThrow() }
             }
@@ -94,51 +98,69 @@ class ChatRulesTest {
     }
 }
 
-/** Starts a server instance's chat service the way runBackend does. */
-private suspend fun chatServiceOn(database: PostgreSQL): ChatService {
-    val memberships = SqlxMembershipRepository(database)
-    val messages = SqlxChatRoomRepository(database)
-    memberships.initialize()
-    messages.initialize()
-    return ChatService(memberships, messages, PgRoomSignals.listen(database), SqlxAtomicity(database))
-}
+/** Few iterations keep registering fast; the iteration count does not change what the rules observe. */
+private val testPasswords = Pbkdf2PasswordHasher(iterations = 1_000)
 
 private fun MemoryChatStore.chatService() =
     ChatService(membershipRepository, chatRoomRepository, roomSignals, atomicity)
 
+private fun MemoryChatStore.accountService() = AccountService(userRepository, testPasswords)
+
+private fun MemoryChatStore.gateway() = LocalChatGateway(accountService(), chatService())
+
+/** Starts a server instance's services the way runBackend does. */
+private suspend fun gatewayOn(database: PostgreSQL): ChatGateway {
+    val users = SqlxUserRepository(database)
+    val memberships = SqlxMembershipRepository(database)
+    val messages = SqlxChatRoomRepository(database)
+    users.initialize()
+    memberships.initialize()
+    messages.initialize()
+    val chat = ChatService(memberships, messages, PgRoomSignals.listen(database), SqlxAtomicity(database))
+    return LocalChatGateway(AccountService(users, testPasswords), chat)
+}
+
 /**
- * The chat rules every environment must satisfy, observed only through [ChatClient].
- * Changes go through [chat] and messages are read through [reader], which may be another server instance.
+ * The account and chat rules every environment must satisfy, observed only through [ChatGateway] and [ChatClient].
+ * Changes go through [gateway] and messages are read through [readerGateway], which may be another server instance.
  */
-private suspend fun verifyChatRules(chat: ChatClient, reader: ChatClient = chat) = coroutineScope {
-    val alice = UserId("alice")
+private suspend fun verifyChatRules(gateway: ChatGateway, readerGateway: ChatGateway = gateway) = coroutineScope {
     val room = RoomId("lobby")
+    val alicePassword = Password("alice-password")
+
+    // A username is registered once, and only its password signs in.
+    val alice = gateway.register(UserId("alice"), alicePassword)
+    assertChatError(ChatError.UsernameTaken) { gateway.register(UserId("alice"), Password("another-password")) }
+    assertChatError(ChatError.InvalidCredentials) { readerGateway.login(UserId("alice"), Password("wrong-password")) }
+    assertChatError(ChatError.InvalidCredentials) { readerGateway.login(UserId("nobody"), alicePassword) }
+    val aliceReading = readerGateway.login(UserId("alice"), alicePassword)
 
     // Joining twice announces the user only once. A reader receives the history, then each new message.
-    chat.join(alice, room)
-    chat.join(alice, room)
-    val aliceReader = Reader(this, reader.messages(alice, room))
+    alice.join(room)
+    alice.join(room)
+    val aliceReader = Reader(this, aliceReading.messages(room))
     assertEquals("alice 加入了群聊", aliceReader.next())
-    chat.send(SendMessageRequest(alice, room, MessageContent("你好")))
+    alice.send(room, MessageContent("你好"))
     assertEquals("你好", aliceReader.next())
 
     // Joining and announcing are atomic: when the welcome message fails, the membership is rolled back
     // and the welcome message never reaches a reader.
-    val blocked = UserId("blocked")
-    assertFails { chat.join(blocked, room) }
-    assertNotInRoom { reader.messages(blocked, room).first() }
-    chat.send(SendMessageRequest(alice, room, MessageContent("之后")))
+    val blockedPassword = Password("blocked-password")
+    val blocked = gateway.register(UserId("blocked"), blockedPassword)
+    assertFails { blocked.join(room) }
+    assertChatError(ChatError.NotInRoom) { readerGateway.login(blocked.user, blockedPassword).messages(room).first() }
+    alice.send(room, MessageContent("之后"))
     assertEquals("之后", aliceReader.next())
 
     // A reader resumes after the last message it received.
-    val resumed = reader.messages(alice, room, after = MessageSeq(1)).take(2).toList()
+    val resumed = aliceReading.messages(room, after = MessageSeq(1)).take(2).toList()
     assertEquals(listOf("你好", "之后"), resumed.map { it.content.value })
 
     // Leaving ends the reader's stream; afterwards the user can neither send nor read.
-    chat.leave(alice, room)
-    assertNotInRoom { aliceReader.next() }
-    assertNotInRoom { chat.send(SendMessageRequest(alice, room, MessageContent("还在吗"))) }
-    assertNotInRoom { reader.messages(alice, room).first() }
+    alice.leave(room)
+    assertChatError(ChatError.NotInRoom) { aliceReader.next() }
+    assertChatError(ChatError.NotInRoom) { alice.send(room, MessageContent("还在吗")) }
+    assertChatError(ChatError.NotInRoom) { aliceReading.messages(room).first() }
 }
 
 /** Collects [messages] in the background, so the test can act while it reads. */
@@ -159,7 +181,7 @@ private class Reader(scope: CoroutineScope, messages: Flow<ChatMessage>) {
     suspend fun next(): String = withTimeout(5.seconds) { received.receive().content.value }
 }
 
-private suspend fun assertNotInRoom(action: suspend () -> Unit) {
+private suspend fun assertChatError(expected: ChatError, action: suspend () -> Unit) {
     val failure = assertFailsWith<ChatException> { action() }
-    assertEquals(ChatError.NotInRoom, failure.error)
+    assertEquals(expected, failure.error)
 }

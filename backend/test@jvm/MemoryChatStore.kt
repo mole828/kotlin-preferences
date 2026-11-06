@@ -9,6 +9,7 @@ import preferences.modeling.Atomicity
 import preferences.modeling.ChatRoomRepository
 import preferences.modeling.MembershipRepository
 import preferences.modeling.RoomSignals
+import preferences.modeling.UserRepository
 import preferences.modeling.types.ChatMessage
 import preferences.modeling.types.MessageContent
 import preferences.modeling.types.MessageSeq
@@ -25,6 +26,7 @@ import kotlin.time.Instant
  * @param rejectedContent a message content that fails to save, like the constraint added in the PostgreSQL test.
  */
 class MemoryChatStore(private val rejectedContent: String? = null) {
+    @Volatile private var passwordHashes = mapOf<UserId, String>()
     @Volatile private var memberships = setOf<Pair<UserId, RoomId>>()
     @Volatile private var messages = listOf<ChatMessage>()
 
@@ -40,6 +42,16 @@ class MemoryChatStore(private val rejectedContent: String? = null) {
         } else {
             versions.update { it + (roomId to (it[roomId] ?: 0) + 1) }
         }
+    }
+
+    val userRepository = object : UserRepository {
+        override suspend fun addUser(username: UserId, passwordHash: String): Boolean {
+            if (username in passwordHashes) return false
+            passwordHashes = passwordHashes + (username to passwordHash)
+            return true
+        }
+
+        override suspend fun passwordHash(username: UserId): String? = passwordHashes[username]
     }
 
     val membershipRepository = object : MembershipRepository {

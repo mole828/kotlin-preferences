@@ -17,7 +17,7 @@
 | 模块 | 技术 | 职责 |
 | --- | --- | --- |
 | `modeling` | Kotlin Multiplatform，JVM + JS + Linux/macOS Native | 领域模型、业务规则与用例、仓库接口，以及共享 HTTP 契约 |
-| `client` | Kotlin Multiplatform，JVM + JS | 客户端共享代码：HTTP 客户端 `KtorChatClient` 与界面无关的会话状态 `ChatSession` |
+| `client` | Kotlin Multiplatform，JVM + JS | 客户端共享代码：HTTP 实现 `KtorChatGateway` 与界面无关的会话状态 `ChatSession` |
 | `backend` | Ktor CIO、Kotlin Multiplatform | 三个服务端平台共享的 HTTP 路由、业务服务装配与 sqlx4k 持久化 |
 | `jvm` / `linux` / `macos` | Kotlin/JVM、Kotlin/Native | 服务启动入口，位于 `backend/runtime/`，仅调用共享的 `runBackend()` |
 | `web` | Kotlin/JS、kotlin-react、Vite | 聊天界面，只负责渲染 `ChatSession` 的状态和收集输入 |
@@ -28,7 +28,8 @@
 
 - **业务集中在 `modeling`**：`ChatService` 负责成员检查、入群消息和消息存取；值类在构造时校验，非法值进不了业务代码；仓库只负责存取。
 - **事务边界由用例决定**：用例通过 `Atomicity.atomic` 声明原子性，路由不建立事务；sqlx4k 的事务上下文只出现在 backend。详见 [docs/transactions.md](docs/transactions.md)。
-- **共享调用契约**：`ChatService` 与 `KtorChatClient` 实现同一个 `ChatClient`。业务失败是可序列化的 sealed `ChatError`，两侧都以 `ChatException(error)` 抛出，HTTP 只传输 `ChatError`。详见 [docs/error-contract.md](docs/error-contract.md)。
+- **身份由服务端认定**：用户名密码登录后取得 `ChatClient`，HTTP 以 JWT 携带身份；业务规则显式接收用户，`ChatService.actingAs(user)` 把它固定为共享契约。详见 [docs/authentication.md](docs/authentication.md)。
+- **共享调用契约**：本地（`LocalChatGateway`）与 HTTP（`KtorChatGateway`）实现同一组 `ChatGateway` / `ChatClient`。业务失败是可序列化的 sealed `ChatError`，两侧都以 `ChatException(error)` 抛出，HTTP 只传输 `ChatError`。详见 [docs/error-contract.md](docs/error-contract.md)。
 - **消息推送**：`ChatClient.messages` 返回 `Flow`，服务端经 SSE 推送；消息带房间内按提交顺序可见的序号，PostgreSQL 的 `NOTIFY` 随事务提交，每个实例一个 `LISTEN` 连接在进程内分发。详见 [docs/push.md](docs/push.md)。
 - **界面状态逻辑共享**：加入、接收消息、发送、离开、被移出房间和防重复提交由 `client` 中的 `ChatSession` 处理，以 `StateFlow<ChatUiState>` 暴露状态；界面只负责渲染，以后的 Compose UI 可直接复用。详见 [docs/client-session.md](docs/client-session.md)。
 
@@ -51,18 +52,20 @@ npm run dev
 
 修改 Kotlin 源码后运行 `npm run build:kotlin` 或重启 `npm run dev`，当前没有自动监视编译。`npm run build` 生成 `web/dist/`。
 
-页面填写昵称和房间名后加入；同房间的多个窗口实时收到新消息。昵称直接作为用户标识，没有账号登录，成员检查不等于身份认证。
+页面先注册或登录，再填写房间名加入；同房间的多个窗口实时收到新消息。后端从环境变量 `CHAT_JWT_SECRET` 读取令牌签名密钥，未配置时使用开发密钥并打印警告。
 
 ## 聊天 API
 
 | 请求 | 参数/请求体 | 返回 |
 | --- | --- | --- |
-| `POST /api/chat/join` | `{"userId":"alice","roomId":"lobby"}` | `204`，重复加入无副作用 |
+| `POST /api/auth/register` | `{"username":"alice","password":"至少8位"}` | `201` 和 `{"user":"alice","token":"…"}`；用户名已存在返回 `409` |
+| `POST /api/auth/login` | 同上 | `200` 和令牌；用户名或密码错误返回 `401` |
+| `POST /api/chat/join` | `{"roomId":"lobby"}` | `204`，重复加入无副作用 |
 | `POST /api/chat/leave` | 同上 | `204`，消息仍保留 |
-| `POST /api/chat/messages` | `{"sender":"alice","roomId":"lobby","content":"你好"}` | `201`，包含房间内序号和服务端时间的消息 |
-| `GET /api/chat/messages` | `userId`、`roomId`，可选 `after` | SSE 流：`after` 之后的消息，然后是新消息 |
+| `POST /api/chat/messages` | `{"roomId":"lobby","content":"你好"}` | `201`，包含房间内序号和服务端时间的消息 |
+| `GET /api/chat/messages` | `roomId`，可选 `after` | SSE 流：`after` 之后的消息，然后是新消息 |
 
-未加入房间时返回 `403` 和 `{"type":"NotInRoom"}`，消息流则以一个 `Failure` 事件结束；无效参数返回 `400` 和纯文本说明。消息最多 4000 字符，用户和房间标识最多 80 字符。
+`/api/chat/*` 都需要 `Authorization: Bearer <token>`，令牌缺失、无效或过期时返回 `401` 和 `{"type":"SessionExpired"}`。未加入房间时返回 `403` 和 `{"type":"NotInRoom"}`，消息流则以一个 `Failure` 事件结束；无效参数返回 `400` 和纯文本说明。消息最多 4000 字符，用户和房间标识最多 80 字符。
 
 ## 验证
 
@@ -83,6 +86,7 @@ cd web && npm run build
 
 - [docs/transactions.md](docs/transactions.md)：业务逻辑、事务边界与 sqlx4k 执行器
 - [docs/error-contract.md](docs/error-contract.md)：调用契约、业务失败的传递与分层
+- [docs/authentication.md](docs/authentication.md)：登录、JWT 与身份如何穿过共享契约
 - [docs/push.md](docs/push.md)：消息推送、房间内序号与 PostgreSQL 广播
 - [docs/sse-feasibility.md](docs/sse-feasibility.md)：Web 端 SSE（Vite 代理、Ktor JS 引擎）可行性实验
 - [docs/client-session.md](docs/client-session.md)：客户端会话状态与界面的分工
