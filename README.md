@@ -92,6 +92,7 @@ cd web && npm run build
 - [docs/client-session.md](docs/client-session.md)：客户端会话状态与界面的分工
 - [docs/testing.md](docs/testing.md)：对照测试的做法与位置
 - [docs/rich-errors-and-krpc.md](docs/rich-errors-and-krpc.md)：Rich Errors 与 kotlinx-rpc 实验记录
+- [docs/cloudflare-worker.md](docs/cloudflare-worker.md)：Cloudflare Worker 运行时的接入评估与暂不接入的原因
 
 ## 官方资料
 
